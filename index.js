@@ -63,8 +63,8 @@ export default {
         // 并发请求所有机场订阅
         const fetchPromises = subscriptionUrls.map(async (subUrl) => {
           try {
-            const res = await fetch(subUrl, { 
-              headers: { 'User-Agent': 'ClashMeta/1.16.0' } 
+            const res = await fetch(subUrl, {
+              headers: { 'User-Agent': 'ClashMeta/1.16.0' }
             });
             if (!res.ok) return null;
             let text = await res.text();
@@ -84,46 +84,55 @@ export default {
         let airportIdx = 0;
 
         for (const raw of rawResults) {
-          airportIdx++;
           if (!raw) continue;
+
           try {
-            const lines = raw.replace(/\r\n/g, '\n').split('\n');
-            let proxiesLines = [];
-            let inProxies = false;
-            let baseIndent = -1;
+            const parsed = extractProxyNodes(raw);
+            if (!parsed || parsed.nodes.length === 0) {
+              console.error("Parse error: proxies module or nodes not found");
+              continue;
+            }
 
-            // 严谨的行状态机解析：完美兼容不同缩进、无引号、单双引号及多机场混合格式
-            for (let line of lines) {
-              const trimmed = line.trim();
-              if (!inProxies) {
-                if (/^proxies\s*:/i.test(trimmed)) {
-                  inProxies = true;
-                  continue;
-                }
-              } else {
-                // 如果遇到其他顶层配置项（行首无空格且含冒号），则退出 proxies 块
-                if (/^[a-zA-Z_-]+\s*:/i.test(line) && !line.startsWith(' ') && !line.startsWith('\t')) {
-                  break;
-                }
-                proxiesLines.push(line);
+            const currentAirportIdx = airportIdx + 1;
+            const airportNodes = [];
+            const airportNames = [];
+            const nameCounts = new Map();
+            let airportValid = true;
+
+            // 独立识别并处理每一个节点
+            for (const node of parsed.nodes) {
+              const result = renameProxyNode(node, currentAirportIdx);
+
+              if (!result || !result.name) {
+                airportValid = false;
+                console.error("Parse error: proxy name not found");
+                break;
               }
+
+              // 防止同一机场内出现重复节点名称
+              let uniqueName = result.name;
+              const count = (nameCounts.get(uniqueName) || 0) + 1;
+              nameCounts.set(uniqueName, count);
+
+              if (count > 1) {
+                uniqueName = `${uniqueName} (${count})`;
+                result.text = replaceProxyName(result.text, uniqueName);
+              }
+
+              airportNames.push(uniqueName);
+              airportNodes.push(normalizeProxyIndent(result.text, parsed.listIndent));
             }
 
-            const extractedText = proxiesLines.join('\n').trim();
-            if (extractedText) {
-              // 自动为多机场节点名称添加 [1], [2] 序号前缀，避免重名冲突及丢失
-              const nameRegex = /(?:(^\s*-\s*|^\s*|[,{]\s*)(?:"name"|'name'|name)\s*:\s*)(?:"((?:\\.|[^"\\])*)"|'((?:''|[^'])*)'|([^,\r\n}\]]+))/gm;
-              
-              const modifiedText = extractedText.replace(nameRegex, (match, prefix, q1, q2, unquoted) => {
-                const rawName = (q1 || q2 || unquoted || "").trim().replace(/''/g, "'");
-                if (!rawName) return match;
-                const uniqueName = `[${airportIdx}] ${rawName}`;
-                rawProxyNames.push(uniqueName);
-                return `${prefix}"${uniqueName}"`;
-              });
-
-              allProxiesText += "\n" + modifiedText;
+            // 只有整个机场的节点均成功识别，才纳入最终配置
+            if (!airportValid || airportNodes.length !== parsed.nodes.length) {
+              console.error(`Airport ${currentAirportIdx} parse validation failed`);
+              continue;
             }
+
+            airportIdx++;
+            allProxiesText += "\n" + airportNodes.join("\n");
+            rawProxyNames.push(...airportNames);
+
           } catch (e) {
             console.error("Parse error", e);
           }
@@ -137,12 +146,12 @@ export default {
           return new Response("Error: Failed to fetch or parse proxies from subscription links", { status: 500 });
         }
 
-        const uniqueProxyNames = uniqueNames.map(n => `      - "${n}"`).join('\n');
+        const uniqueProxyNames = uniqueNames.map(n => `      - "${n.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`).join('\n');
 
         const getGroupProxies = (regex) => {
           const matched = uniqueNames.filter(n => regex.test(n));
           if (matched.length > 0) {
-            return matched.map(n => `      - "${n}"`).join('\n');
+            return matched.map(n => `      - "${n.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`).join('\n');
           } else {
             return `      - "🏴‍☠️ ＤＩＲＥＣＴ"`;
           }
@@ -451,7 +460,7 @@ rules:
   - "DOMAIN-SUFFIX,4399.com,DIRECT"
   - "MATCH,SELECT"`;
 
-        const cleanConfig = dedent(finalConfig);
+        const cleanConfig = finalConfig;
         return new Response(cleanConfig, {
           headers: { "Content-Type": "text/yaml; charset=utf-8" },
         });
@@ -482,6 +491,270 @@ function decodeSubscriptionContent(text) {
     }
   }
   return text;
+}
+
+// 提取 proxies 模块中的独立节点，兼容不同缩进和节点表达格式
+function extractProxyNodes(raw) {
+  const lines = raw.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+
+  let proxiesIndex = -1;
+  let proxiesIndent = 0;
+
+  for (let i = 0; i < lines.length; i++) {
+    const match = /^([ \t]*)proxies\s*:\s*(?:#.*)?$/i.exec(lines[i]);
+    if (match) {
+      proxiesIndex = i;
+      proxiesIndent = match[1].replace(/\t/g, "    ").length;
+      break;
+    }
+  }
+
+  if (proxiesIndex === -1) return null;
+
+  const nodes = [];
+  let listIndent = -1;
+  let currentNode = [];
+
+  const getIndent = (line) => {
+    const match = /^[ \t]*/.exec(line);
+    return match ? match[0].replace(/\t/g, "    ").length : 0;
+  };
+
+  const isSequenceItem = (line) => {
+    return /^[ \t]*-\s*(?:$|\S)/.test(line);
+  };
+
+  const flushNode = () => {
+    const content = currentNode.join('\n').trim();
+    if (content) nodes.push(content);
+    currentNode = [];
+  };
+
+  for (let i = proxiesIndex + 1; i < lines.length; i++) {
+    const line = lines[i];
+    const trimmed = line.trim();
+
+    if (!trimmed || trimmed.startsWith('#')) {
+      if (currentNode.length > 0) currentNode.push(line);
+      continue;
+    }
+
+    const indent = getIndent(line);
+
+    // 遇到下一个同级或更高级的配置项，结束 proxies 模块
+    if (indent <= proxiesIndent && /^[^#\s][^:]*\s*:/.test(line)) {
+      break;
+    }
+
+    if (isSequenceItem(line)) {
+      if (listIndent === -1) {
+        listIndent = indent;
+      } else if (indent === listIndent) {
+        flushNode();
+      } else if (indent < listIndent) {
+        break;
+      }
+    }
+
+    if (listIndent !== -1) {
+      currentNode.push(line);
+    }
+  }
+
+  flushNode();
+
+  if (nodes.length === 0 || listIndent === -1) return null;
+
+  return { nodes, listIndent };
+}
+
+// 识别并修改单个节点的 name 字段
+function renameProxyNode(nodeText, airportIdx) {
+  const nameRegex = /^[ \t]*(?:-[ \t]*)?(?:"name"|'name'|name)\s*:\s*|[,{][ \t]*(?:"name"|'name'|name)\s*:\s*/gm;
+  const match = nameRegex.exec(nodeText);
+
+  if (!match) return null;
+
+  const valueStart = match.index + match[0].length;
+  const quote = nodeText[valueStart];
+
+  let valueEnd = valueStart;
+  let rawName = "";
+
+  // 双引号名称
+  if (quote === '"') {
+    valueEnd = valueStart + 1;
+    let escaped = false;
+
+    while (valueEnd < nodeText.length) {
+      const char = nodeText[valueEnd];
+
+      if (escaped) {
+        escaped = false;
+      } else if (char === '\\') {
+        escaped = true;
+      } else if (char === '"') {
+        break;
+      }
+
+      valueEnd++;
+    }
+
+    if (valueEnd >= nodeText.length) return null;
+
+    const rawValue = nodeText.slice(valueStart, valueEnd + 1);
+
+    try {
+      rawName = JSON.parse(rawValue);
+    } catch (e) {
+      rawName = nodeText.slice(valueStart + 1, valueEnd);
+    }
+
+    valueEnd++;
+  }
+  // 单引号名称
+  else if (quote === "'") {
+    valueEnd = valueStart + 1;
+
+    while (valueEnd < nodeText.length) {
+      if (nodeText[valueEnd] === "'") {
+        if (nodeText[valueEnd + 1] === "'") {
+          valueEnd += 2;
+          continue;
+        }
+        break;
+      }
+      valueEnd++;
+    }
+
+    if (valueEnd >= nodeText.length) return null;
+
+    rawName = nodeText.slice(valueStart + 1, valueEnd).replace(/''/g, "'");
+    valueEnd++;
+  }
+  // 无引号名称
+  else {
+    valueEnd = valueStart;
+
+    while (
+      valueEnd < nodeText.length &&
+      nodeText[valueEnd] !== '\n' &&
+      nodeText[valueEnd] !== '\r' &&
+      nodeText[valueEnd] !== ',' &&
+      nodeText[valueEnd] !== '}'
+    ) {
+      valueEnd++;
+    }
+
+    rawName = nodeText.slice(valueStart, valueEnd).trim();
+  }
+
+  rawName = String(rawName).trim();
+  if (!rawName) return null;
+
+  const uniqueName = `[${airportIdx}] ${rawName}`;
+  const escapedName = uniqueName
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"');
+
+  const modifiedText =
+    nodeText.slice(0, valueStart) +
+    `"${escapedName}"` +
+    nodeText.slice(valueEnd);
+
+  return {
+    name: uniqueName,
+    text: modifiedText
+  };
+}
+
+// 替换已识别节点的名称
+function replaceProxyName(nodeText, newName) {
+  const nameRegex = /^[ \t]*(?:-[ \t]*)?(?:"name"|'name'|name)\s*:\s*|[,{][ \t]*(?:"name"|'name'|name)\s*:\s*/gm;
+  const match = nameRegex.exec(nodeText);
+
+  if (!match) return nodeText;
+
+  const valueStart = match.index + match[0].length;
+  const quote = nodeText[valueStart];
+
+  let valueEnd = valueStart;
+
+  if (quote === '"') {
+    valueEnd = valueStart + 1;
+    let escaped = false;
+
+    while (valueEnd < nodeText.length) {
+      const char = nodeText[valueEnd];
+
+      if (escaped) {
+        escaped = false;
+      } else if (char === '\\') {
+        escaped = true;
+      } else if (char === '"') {
+        break;
+      }
+
+      valueEnd++;
+    }
+
+    if (valueEnd >= nodeText.length) return nodeText;
+    valueEnd++;
+  } else if (quote === "'") {
+    valueEnd = valueStart + 1;
+
+    while (valueEnd < nodeText.length) {
+      if (nodeText[valueEnd] === "'") {
+        if (nodeText[valueEnd + 1] === "'") {
+          valueEnd += 2;
+          continue;
+        }
+        break;
+      }
+      valueEnd++;
+    }
+
+    if (valueEnd >= nodeText.length) return nodeText;
+    valueEnd++;
+  } else {
+    while (
+      valueEnd < nodeText.length &&
+      nodeText[valueEnd] !== '\n' &&
+      nodeText[valueEnd] !== '\r' &&
+      nodeText[valueEnd] !== ',' &&
+      nodeText[valueEnd] !== '}'
+    ) {
+      valueEnd++;
+    }
+  }
+
+  const escapedName = newName
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"');
+
+  return nodeText.slice(0, valueStart) +
+    `"${escapedName}"` +
+    nodeText.slice(valueEnd);
+}
+
+// 统一节点缩进，同时保留节点内部嵌套结构
+function normalizeProxyIndent(nodeText, listIndent) {
+  const lines = nodeText.split('\n');
+
+  return lines.map(line => {
+    if (line.trim() === '') return '';
+
+    const match = /^[ \t]*/.exec(line);
+    const originalIndent = match ? match[0].length : 0;
+
+    const visualIndent = match
+      ? match[0].replace(/\t/g, "    ").length
+      : 0;
+
+    const remainingIndent = Math.max(0, visualIndent - listIndent);
+
+    return "  " + " ".repeat(remainingIndent) + line.slice(originalIndent);
+  }).join('\n');
 }
 
 function getHTMLTemplate(origin) {
