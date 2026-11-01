@@ -85,13 +85,32 @@ export default {
         for (const raw of rawResults) {
           if (!raw) continue;
           try {
-            // 使用更严谨的正则，防止被节点内带连字符的子属性（如 ws-opts、reality-opts）提前截断
-            const proxiesMatch = raw.replace(/\r\n/g, '\n').match(/^[ \t]*proxies:[ \t]*\n([\s\S]*?)(?:\n^[ \t]*[a-zA-Z_-]+[ \t]*:|$)/m);
-            if (proxiesMatch && proxiesMatch[1]) {
-              allProxiesText += "\n" + proxiesMatch[1].trim();
+            const rawText = raw.replace(/\r\n/g, '\n');
+            const lines = rawText.split('\n');
+            let proxiesContent = [];
+            let capturing = false;
+            
+            // 精准逐行提取 proxies 节点块，完全杜绝正则匹配漏洞
+            for (let i = 0; i < lines.length; i++) {
+              const line = lines[i];
+              if (/^[ \t]*proxies:[ \t]*$/.test(line) || /^[ \t]*proxies:[ \t]*\S/.test(line)) {
+                capturing = true;
+                continue;
+              }
+              if (capturing) {
+                if (/^[a-zA-Z_-]+[ \t]*:/.test(line)) {
+                  break;
+                }
+                proxiesContent.push(line);
+              }
+            }
+
+            const extractedProxiesText = proxiesContent.join('\n').trim();
+            if (extractedProxiesText) {
+              allProxiesText += "\n" + extractedProxiesText;
 
               // 提取每个节点的 name 用于填充 🇺🇳 ALL 策略组（兼容多种 YAML 节点表达格式）
-              const nameMatches = proxiesMatch[1].matchAll(
+              const nameMatches = extractedProxiesText.matchAll(
                 /(?:^\s*-\s*|^\s*|[,{]\s*)(?:"name"|'name'|name)\s*:\s*(?:"((?:\\.|[^"\\])*)"|'((?:''|[^'])*)'|([^,\r\n}\]]+))/gm
               );
 
