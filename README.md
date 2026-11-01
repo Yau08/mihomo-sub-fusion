@@ -40,7 +40,10 @@
 1. 登录 [Cloudflare Dashboard](https://dash.cloudflare.com/)。
 2. 左侧导航栏进入 **Workers & Pages** -> 点击 **Create application** -> **Create Worker**。
 3. 给 Worker 起个名字（例如 `mihomo-sub`），点击 **Deploy**。
-4. 部署成功后，点击 **Edit code**，将仓库中的 `index.js` 代码完整复制进去，点击右上角 **Save and deploy**。
+4. 部署成功后，点击 **Edit code**，将存储库中的 `index.js` 代码完整复制进去，点击右上角 **Save and deploy**。
+
+>index.js代码链接：
+>https://raw.githubusercontent.com/Yau08/mihomo-sub-fusion/refs/heads/main/index.js
 
 ### 第二步：绑定 KV 存储（推荐，用于持久化保存订阅配置）
 1. 在 Cloudflare 后台左侧点击 **Workers** -> **KV** -> **Create a namespace**（命名空间名称可随意，例如 `sub_kv`）。
@@ -54,7 +57,7 @@
 ## 📖 使用说明
 
 1. **访问 UI 配置面板**：
-   打开你的 Worker 访问域名，并在路径后加上 `/subset`（例如：`https://你的域名.workers.dev/set`）。
+   打开你的 Worker 访问域名，并在路径后加上 `/subs`（例如：`https://你的域名.workers.dev/set`）。
 2. **输入订阅链接**：
    在文本框中多行粘贴你的多个机场/节点订阅链接，点击 **“确认并生成专属订阅”**。
 3. **导入代理软件**：
