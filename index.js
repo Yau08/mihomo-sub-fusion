@@ -1,139 +1,138 @@
 export default {
   async fetch(request, env, ctx) {
-    Const url = new URL(request.url);
-    Const path = url.pathname;
+    const url = new URL(request.url);
+    const path = url.pathname;
 
     // 1. UI 界面路由 (仅允许通过 /set 访问)
-    If (path === "/set") {
-      Return new Response(getHTMLTemplate(url.origin), {
-        Headers: { "Content-Type": "text/html; charset=utf-8" },
+    if (path === "/set") {
+      return new Response(getHTMLTemplate(url.origin), {
+        headers: { "Content-Type": "text/html; charset=utf-8" },
       });
     }
 
     // 2. 保存订阅配置 API
-    If (path === "/api/save" && request.method === "POST") {
-      Try {
-        If (!env.SUB_KV) {
-          Return new Response(JSON.stringify({ success: false, error: "服务器未绑定 SUB_KV 存储空间，请先在 Cloudflare 后台配置 KV 绑定" }), {
-            Headers: { "Content-Type": "application/json" },
+    if (path === "/api/save" && request.method === "POST") {
+      try {
+        if (!env.SUB_KV) {
+          return new Response(JSON.stringify({ success: false, error: "服务器未绑定 SUB_KV 存储空间，请先在 Cloudflare 后台配置 KV 绑定" }), {
+            headers: { "Content-Type": "application/json" },
           });
         }
 
-        Const body = await request.json();
-        Const links = body.links; // 换行分隔的多个订阅链接
-        If (!links) {
-          Return new Response(JSON.stringify({ success: false, error: "订阅链接不能为空" }), {
-            Headers: { "Content-Type": "application/json" },
+        const body = await request.json();
+        const links = body.links; // 换行分隔的多个订阅链接
+        if (!links) {
+          return new Response(JSON.stringify({ success: false, error: "订阅链接不能为空" }), {
+            headers: { "Content-Type": "application/json" },
           });
         }
 
-        Const token = generateToken();
-        Await env.SUB_KV.put(token, links, { expirationTtl: 31536000 }); // 保存一年
+        const token = generateToken();
+        await env.SUB_KV.put(token, links, { expirationTtl: 31536000 }); // 保存一年
 
-        Return new Response(JSON.stringify({ success: true, token, url: `${url.origin}/sub?token=${token}` }), {
-          Headers: { "Content-Type": "application/json" },
+        return new Response(JSON.stringify({ success: true, token, url: `${url.origin}/sub?token=${token}` }), {
+          headers: { "Content-Type": "application/json" },
         });
       } catch (e) {
-        Return new Response(JSON.stringify({ success: false, error: e.message }), {
-          Headers: { "Content-Type": "application/json" },
+        return new Response(JSON.stringify({ success: false, error: e.message }), {
+          headers: { "Content-Type": "application/json" },
         });
       }
     }
 
     // 3. 生成最终 Mihomo 订阅路由
-    If (path === "/sub") {
-      Const token = url.searchParams.get("token");
-      Let linksText = "";
+    if (path === "/sub") {
+      const token = url.searchParams.get("token");
+      let linksText = "";
 
-      If (env.SUB_KV && token) {
-        LinksText = await env.SUB_KV.get(token);
+      if (env.SUB_KV && token) {
+        linksText = await env.SUB_KV.get(token);
       }
 
-      If (!linksText) {
-        LinksText = url.searchParams.get("links") || "";
+      if (!linksText) {
+        linksText = url.searchParams.get("links") || "";
       }
 
-      If (!linksText) {
-        Return new Response("Error: Configuration not found or links are empty. Please configure via /set", { status: 400 });
+      if (!linksText) {
+        return new Response("Error: Configuration not found or links are empty. Please configure via /set", { status: 400 });
       }
 
-      Const subscriptionUrls = linksText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+      const subscriptionUrls = linksText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
 
-      Try {
+      try {
         // 并发请求所有机场订阅
-        Const fetchPromises = subscriptionUrls.map(async (subUrl) => {
-          Try {
-            Const res = await fetch(subUrl, { 
-              Headers: { 'User-Agent': 'ClashMeta/1.16.0' } 
+        const fetchPromises = subscriptionUrls.map(async (subUrl) => {
+          try {
+            const res = await fetch(subUrl, { 
+              headers: { 'User-Agent': 'ClashMeta/1.16.0' } 
             });
-            If (!res.ok) return null;
-            Let text = await res.text();
+            if (!res.ok) return null;
+            let text = await res.text();
 
             // 自动检测并解码 Base64 订阅内容
-            Text = decodeSubscriptionContent(text);
-            Return text;
+            text = decodeSubscriptionContent(text);
+            return text;
           } catch (err) {
-            Return null;
+            return null;
           }
         });
 
-        Const rawResults = await Promise.all(fetchPromises);
+        const rawResults = await Promise.all(fetchPromises);
 
-        Let allProxiesText = "";
-        Let rawProxyNames = [];
+        let allProxiesText = "";
+        let rawProxyNames = [];
 
         for (const raw of rawResults) {
-          If (!raw) continue;
-          Try {
-            // 修复：使用更严谨的正则，防止被节点内带连字符的子属性（如 ws-opts、reality-opts）提前截断
-            Const proxiesMatch = raw.replace(/\r\n/g, '\n').match(/^[ \t]*proxies:[ \t]*\n([\s\S]*?)(?:\n^[ \t]*[a-zA-Z_-]+[ \t]*:|$)/m);
-            If (proxiesMatch && proxiesMatch[1]) {
-              AllProxiesText += "\n" + proxiesMatch[1].trim();
+          if (!raw) continue;
+          try {
+            // 使用更严谨的正则，防止被节点内带连字符的子属性（如 ws-opts、reality-opts）提前截断
+            const proxiesMatch = raw.replace(/\r\n/g, '\n').match(/^[ \t]*proxies:[ \t]*\n([\s\S]*?)(?:\n^[ \t]*[a-zA-Z_-]+[ \t]*:|$)/m);
+            if (proxiesMatch && proxiesMatch[1]) {
+              allProxiesText += "\n" + proxiesMatch[1].trim();
 
               // 提取每个节点的 name 用于填充 🇺🇳 ALL 策略组（兼容多种 YAML 节点表达格式）
-              Const nameMatches = proxiesMatch[1].matchAll(
+              const nameMatches = proxiesMatch[1].matchAll(
                 /(?:^\s*-\s*|^\s*|[,{]\s*)(?:"name"|'name'|name)\s*:\s*(?:"((?:\\.|[^"\\])*)"|'((?:''|[^'])*)'|([^,\r\n}\]]+))/gm
               );
 
               for (const match of nameMatches) {
-                Const name = (match[1] || match[2] || match[3] || "").trim().replace(/''/g, "'");
-                If (name) rawProxyNames.push(name);
+                const name = (match[1] || match[2] || match[3] || "").trim().replace(/''/g, "'");
+                if (name) rawProxyNames.push(name);
               }
             }
           } catch (e) {
-            Console.error("Parse error", e);
+            console.error("Parse error", e);
           }
         }
 
         // 去重节点名称
-        Const uniqueNames = Array.from(new Set(rawProxyNames));
+        const uniqueNames = Array.from(new Set(rawProxyNames));
 
         // 🛡️ 核心防线：如果机场订阅整体崩掉导致拉不到任何节点，直接返回 500 错误
-        // 这样客户端更新订阅会失败并报错提示，从而完美保留客户端原有的本地有效节点缓存！
-        If (uniqueNames.length === 0) {
-          Return new Response("Error: Failed to fetch or parse proxies from subscription links", { status: 500 });
+        if (uniqueNames.length === 0) {
+          return new Response("Error: Failed to fetch or parse proxies from subscription links", { status: 500 });
         }
 
-        Const uniqueProxyNames = uniqueNames.map(n => `      - "${n}"`).join('\n');
+        const uniqueProxyNames = uniqueNames.map(n => `      - "${n}"`).join('\n');
 
-        Const getGroupProxies = (regex) => {
-          Const matched = uniqueNames.filter(n => regex.test(n));
-          If (matched.length > 0) {
-            Return matched.map(n => `      - "${n}"`).join('\n');
+        const getGroupProxies = (regex) => {
+          const matched = uniqueNames.filter(n => regex.test(n));
+          if (matched.length > 0) {
+            return matched.map(n => `      - "${n}"`).join('\n');
           } else {
-            Return `      - "🏴‍☠️ ＤＩＲＥＣＴ"`;
+            return `      - "🏴‍☠️ ＤＩＲＥＣＴ"`;
           }
         };
 
-        Const rocProxies = getGroupProxies(/台湾|TW|tw|Taiwan|ROC|台灣|臺灣|湾|灣|中华|中華|民国|民國|中华民国|中華民國|🇹🇼/i);
-        Const hkgProxies = getGroupProxies(/香港|HK|hk|Hong Kong|Hong|HONG|港|🇭🇰/i);
-        Const jpnProxies = getGroupProxies(/日本|JP|Japan|日|🇯🇵/i);
-        Const korProxies = getGroupProxies(/韩国|KR|Korea|韩|韓|🇰🇷/i);
-        Const sgpProxies = getGroupProxies(/新加坡|SG|Singapore|新|坡|狮|獅|🇸🇬/i);
-        Const usaProxies = getGroupProxies(/美国|US|USA|United States|United|UNITED|States|America|美|米|🇺🇸/i);
+        const rocProxies = getGroupProxies(/台湾|TW|tw|Taiwan|ROC|台灣|臺灣|湾|灣|中华|中華|民国|民國|中华民国|中華民國|🇹🇼/i);
+        const hkgProxies = getGroupProxies(/香港|HK|hk|Hong Kong|Hong|HONG|港|🇭🇰/i);
+        const jpnProxies = getGroupProxies(/日本|JP|Japan|日|🇯🇵/i);
+        const korProxies = getGroupProxies(/韩国|KR|Korea|韩|韓|🇰🇷/i);
+        const sgpProxies = getGroupProxies(/新加坡|SG|Singapore|新|坡|狮|獅|🇸🇬/i);
+        const usaProxies = getGroupProxies(/美国|US|USA|United States|United|UNITED|States|America|美|米|🇺🇸/i);
 
         // 拼装完整的 Mihomo 配置模板
-        Const finalConfig = `Mixed-port: 7890
+        const finalConfig = `Mixed-port: 7890
 allow-lan: true
 bind-address: "*"
 mode: rule
@@ -428,42 +427,41 @@ rules:
   - "DOMAIN-SUFFIX,4399.com,DIRECT"
   - "MATCH,SELECT"`;
 
-        Const cleanConfig = dedent(finalConfig);
-        Return new Response(cleanConfig, {
-          Headers: { "Content-Type": "text/yaml; charset=utf-8" },
+        const cleanConfig = dedent(finalConfig);
+        return new Response(cleanConfig, {
+          headers: { "Content-Type": "text/yaml; charset=utf-8" },
         });
 
       } catch (err) {
-        Return new Response("Error generating config: " + err.message, { status: 500 });
+        return new Response("Error generating config: " + err.message, { status: 500 });
       }
     }
 
-    Return new Response("Not Found", { status: 404 });
+    return new Response("Not Found", { status: 404 });
   }
 };
 
 function generateToken() {
-  Return Math.random().toString(36).substring(2) + Date.now().toString(36);
+  return Math.random().toString(36).substring(2) + Date.now().toString(36);
 }
 
 function decodeSubscriptionContent(text) {
-  Text = text.trim();
-  // 如果不包含 proxies 且看起来像 Base64，则尝试解码
-  If (!text.includes("proxies:")) {
-    Try {
-      Const decoded = atob(text);
-      If (decoded.includes("proxies:")) {
-        Return decoded;
+  text = text.trim();
+  if (!text.includes("proxies:")) {
+    try {
+      const decoded = atob(text);
+      if (decoded.includes("proxies:")) {
+        return decoded;
       }
     } catch (e) {
       // 并非 Base64，忽略
     }
   }
-  Return text;
+  return text;
 }
 
 function getHTMLTemplate(origin) {
-  Return `<!DOCTYPE html>
+  return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
@@ -496,43 +494,43 @@ function getHTMLTemplate(origin) {
     </div>
 
     <script>
-        Async function saveConfig() {
-            Const links = document.getElementById('linksInput').value.trim();
-            Const btn = document.getElementById('submitBtn');
-            If (!links) {
-                Alert('请至少输入一个订阅链接');
-                Return;
+        async function saveConfig() {
+            const links = document.getElementById('linksInput').value.trim();
+            const btn = document.getElementById('submitBtn');
+            if (!links) {
+                alert('请至少输入一个订阅链接');
+                return;
             }
 
-            Btn.disabled = true;
-            Btn.textContent = '生成中...';
+            btn.disabled = true;
+            btn.textContent = '生成中...';
 
-            Try {
-                Const res = await fetch('/api/save', {
-                    Method: 'POST',
-                    Headers: { 'Content-Type': 'application/json' },
-                    Body: JSON.stringify({ links })
+            try {
+                const res = await fetch('/api/save', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ links })
                 });
-                Const data = await res.json();
-                If (data.success) {
-                    Document.getElementById('subUrlOutput').value = data.url;
-                    Document.getElementById('resultBox').classList.remove('hidden');
+                const data = await res.json();
+                if (data.success) {
+                    document.getElementById('subUrlOutput').value = data.url;
+                    document.getElementById('resultBox').classList.remove('hidden');
                 } else {
-                    Alert('保存失败: ' + data.error);
+                    alert('保存失败: ' + data.error);
                 }
             } catch (e) {
-                Alert('请求异常: ' + e.message);
+                alert('请求异常: ' + e.message);
             } finally {
-                Btn.disabled = false;
-                Btn.textContent = '确认并生成专属订阅';
+                btn.disabled = false;
+                btn.textContent = '确认并生成专属订阅';
             }
         }
 
-        Function copyUrl() {
-            Const input = document.getElementById('subUrlOutput');
-            Input.select();
-            Document.execCommand('copy');
-            Alert('已成功复制订阅链接到剪贴板！');
+        function copyUrl() {
+            const input = document.getElementById('subUrlOutput');
+            input.select();
+            document.execCommand('copy');
+            alert('已成功复制订阅链接到剪贴板！');
         }
     </script>
 </body>
@@ -540,30 +538,27 @@ function getHTMLTemplate(origin) {
 }
 
 function dedent(text) {
-  Const lines = text.split('\n');
-  Let minIndent = Infinity;
+  const lines = text.split('\n');
+  let minIndent = Infinity;
 
-  // 找出所有非空行中，最小的“非零”缩进（从而精准抓出编辑器注入的空白）
   for (const line of lines) {
-    If (line.trim() === '') continue;
-    Const match = line.match(/^(\s*)/);
-    If (match) {
-      Const indentLen = match[1].length;
-      // 只统计缩进大于 0 的行，防止第一行的 0 把计算带偏
-      If (indentLen > 0 && indentLen < minIndent) {
-        MinIndent = indentLen;
+    if (line.trim() === '') continue;
+    const match = line.match(/^(\s*)/);
+    if (match) {
+      const indentLen = match[1].length;
+      if (indentLen > 0 && indentLen < minIndent) {
+        minIndent = indentLen;
       }
     }
   }
 
-  If (minIndent === Infinity || minIndent === 0) return text;
+  if (minIndent === Infinity || minIndent === 0) return text;
 
-  // 统一削掉编辑器注入的那个巨型基准缩进
-  Return lines.map(line => {
-    Const match = line.match(/^(\s*)/);
-    If (match && match[1].length >= minIndent) {
-      Return line.slice(minIndent);
+  return lines.map(line => {
+    const match = line.match(/^(\s*)/);
+    if (match && match[1].length >= minIndent) {
+      return line.slice(minIndent);
     }
-    Return line;
+    return line;
   }).join('\n');
 }
