@@ -81,8 +81,10 @@ export default {
 
         let allProxiesText = "";
         let rawProxyNames = [];
+        let airportIdx = 0;
 
         for (const raw of rawResults) {
+          airportIdx++;
           if (!raw) continue;
           try {
             const lines = raw.replace(/\r\n/g, '\n').split('\n');
@@ -109,17 +111,18 @@ export default {
 
             const extractedText = proxiesLines.join('\n').trim();
             if (extractedText) {
-              allProxiesText += "\n" + extractedText;
+              // 自动为多机场节点名称添加 [1], [2] 序号前缀，避免重名冲突及丢失
+              const nameRegex = /(?:(^\s*-\s*|^\s*|[,{]\s*)(?:"name"|'name'|name)\s*:\s*)(?:"((?:\\.|[^"\\])*)"|'((?:''|[^'])*)'|([^,\r\n}\]]+))/gm;
+              
+              const modifiedText = extractedText.replace(nameRegex, (match, prefix, q1, q2, unquoted) => {
+                const rawName = (q1 || q2 || unquoted || "").trim().replace(/''/g, "'");
+                if (!rawName) return match;
+                const uniqueName = `[${airportIdx}] ${rawName}`;
+                rawProxyNames.push(uniqueName);
+                return `${prefix}"${uniqueName}"`;
+              });
 
-              // 提取每个节点的 name 用于填充 🇺🇳 ALL 策略组（兼容多种 YAML 节点表达格式）
-              const nameMatches = extractedText.matchAll(
-                /(?:^\s*-\s*|^\s*|[,{]\s*)(?:"name"|'name'|name)\s*:\s*(?:"((?:\\.|[^"\\])*)"|'((?:''|[^'])*)'|([^,\r\n}\]]+))/gm
-              );
-
-              for (const match of nameMatches) {
-                const name = (match[1] || match[2] || match[3] || "").trim().replace(/''/g, "'");
-                if (name) rawProxyNames.push(name);
-              }
+              allProxiesText += "\n" + modifiedText;
             }
           } catch (e) {
             console.error("Parse error", e);
@@ -145,7 +148,7 @@ export default {
           }
         };
 
-        const rocProxies = getGroupProxies(/台湾|TW|tw|Taiwan|ROC|台灣|臺灣|湾|灣|中华|中華|民国|民國|中华民国|中華民國|🇹🇼/i);
+        const rocProxies = getGroupProxies(/台湾|TW|tw|Taiwan|ROC|台灣|臺灣|湾|灣|中華|中華|民国|民國|中华民国|中華民國|🇹🇼/i);
         const hkgProxies = getGroupProxies(/香港|HK|hk|Hong Kong|Hong|HONG|港|🇭🇰/i);
         const jpnProxies = getGroupProxies(/日本|JP|Japan|日|🇯🇵/i);
         const korProxies = getGroupProxies(/韩国|KR|Korea|韩|韓|🇰🇷/i);
