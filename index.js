@@ -395,7 +395,7 @@ rules:
   - "DOMAIN-SUFFIX,4399.com,DIRECT"
   - "MATCH,SELECT"`;
 
-  const cleanConfig = finalConfig.split('\n').map(line => line.trimStart()).join('\n');
+  const cleanConfig = dedent(finalConfig);
   return new Response(cleanConfig, {
   headers: { "Content-Type": "text/yaml; charset=utf-8" },
         });
@@ -504,4 +504,16 @@ function getHTMLTemplate(origin) {
     </script>
 </body>
 </html>`;
+}
+function dedent(text) {
+  const lines = text.split('\n');
+  let minIndent = 999;
+  for (const line of lines) {
+    if (line.trim() === '') continue;
+    const match = line.match(/^(\s*)/);
+    if (match && match[1].length < minIndent) {
+      minIndent = match[1].length;
+    }
+  }
+  return lines.map(line => line.slice(minIndent)).join('\n');
 }
