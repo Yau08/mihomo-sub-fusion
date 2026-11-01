@@ -3,7 +3,7 @@ export default {
     const url = new URL(request.url);
     const path = url.pathname;
 
-    // 1. UI 界面路由（仅允许通过 /set 访问）
+    // 1. UI 界面路由 (仅允许通过 /set 访问)
     if (path === "/set") {
       return new Response(getHTMLTemplate(url.origin), {
         headers: { "Content-Type": "text/html; charset=utf-8" },
@@ -13,19 +13,22 @@ export default {
     // 2. 保存订阅配置 API
     if (path === "/api/save" && request.method === "POST") {
       try {
+        if (!env.SUB_KV) {
+          return new Response(JSON.stringify({ success: false, error: "服务器未绑定 SUB_KV 存储空间，请先在 Cloudflare 后台配置 KV 绑定" }), {
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+
         const body = await request.json();
         const links = body.links; // 换行分隔的多个订阅链接
         if (!links) {
-          return new Response(JSON.stringify({ success: false, error: "链接不能为空" }), {
+          return new Response(JSON.stringify({ success: false, error: "订阅链接不能为空" }), {
             headers: { "Content-Type": "application/json" },
           });
         }
 
         const token = generateToken();
-        // 如果绑定了 KV，则存储到 KV 中
-        if (env.SUB_KV) {
-          await env.SUB_KV.put(token, links, { expirationTtl: 31536000 }); // 保存一年
-        }
+        await env.SUB_KV.put(token, links, { expirationTtl: 31536000 }); // 保存一年
 
         return new Response(JSON.stringify({ success: true, token, url: `${url.origin}/sub?token=${token}` }), {
           headers: { "Content-Type": "application/json" },
@@ -47,23 +50,32 @@ export default {
       }
 
       if (!linksText) {
-        // 如果没有找到对应的 token 或未传，支持从参数直接读取或返回错误
         linksText = url.searchParams.get("links") || "";
       }
 
       if (!linksText) {
-        return new Response("Error: Configuration not found or links are empty. Please configure via /subset", { status: 400 });
+        return new Response("Error: Configuration not found or links are empty. Please configure via /set", { status: 400 });
       }
 
       const subscriptionUrls = linksText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
 
       try {
         // 并发请求所有机场订阅
-        const fetchPromises = subscriptionUrls.map(subUrl => 
-          fetch(subUrl, { headers: { 'User-Agent': 'ClashMeta' } })
-            .then(res => res.text())
-            .catch(() => null)
-        );
+        const fetchPromises = subscriptionUrls.map(async (subUrl) => {
+          try {
+            const res = await fetch(subUrl, { 
+              headers: { 'User-Agent': 'ClashMeta/1.16.0' } 
+            });
+            if (!res.ok) return null;
+            let text = await res.text();
+            
+            // 自动检测并解码 Base64 订阅内容
+            text = decodeSubscriptionContent(text);
+            return text;
+          } catch (err) {
+            return null;
+          }
+        });
 
         const rawResults = await Promise.all(fetchPromises);
 
@@ -92,7 +104,7 @@ export default {
         // 去重节点名称
         const uniqueProxyNames = Array.from(new Set(proxyNames)).join('\n');
 
-        // 拼装你精美的 Mihomo 完整配置模板
+        // 拼装完整的 Mihomo 配置模板
         const finalConfig = `Mixed-port: 7890
 allow-lan: true
 bind-address: "*"
@@ -103,18 +115,18 @@ external-controller: 127.0.0.1:9090
 
 # 自定义直连节点
 proxies:
-  - name: "🏴‍☠️ ＤＩＲＥＣＴ"
+  - name: "ＤＩＲＥＣＴ"
     type: direct
     udp: true
 ${allProxiesText}
 
-# 策略组配置（利用 Mihomo 原生 filter 动态筛选节点）
+# 策略组配置
 proxy-groups:
   - name: "SELECT"
     type: select
     proxies:
       - "🇺🇳 ALL"
-      - "🏴‍☠️ ＤＩＲＥＣＴ"
+      - "ＤＩＲＥＣＴ"
       - "🇹🇼 ROC"
       - "🇭🇰 HKG"
       - "🇯🇵 JPN"
@@ -169,7 +181,7 @@ ${uniqueProxyNames}
     interval: 900
     tolerance: 150
 
-# DNS 配置（优化整合版 Fake-IP）
+# DNS 配置
 dns:
   enable: true
   listen: "0.0.0.0:10053"
@@ -397,7 +409,23 @@ rules:
 };
 
 function generateToken() {
-  return Math.random().toString(36.substring(2)) + Date.now().toString(36);
+  return Math.random().toString(36).substring(2) + Date.now().toString(36);
+}
+
+function decodeSubscriptionContent(text) {
+  text = text.trim();
+  // 如果不包含 proxies 且看起来像 Base64，则尝试解码
+  if (!text.includes("proxies:") && !text.includes("- name:")) {
+    try {
+      const decoded = atob(text);
+      if (decoded.includes("proxies:") || decoded.includes("- name:")) {
+        return decoded;
+      }
+    } catch (e) {
+      // 并非 Base64，忽略
+    }
+  }
+  return text;
 }
 
 function getHTMLTemplate(origin) {
@@ -416,7 +444,7 @@ function getHTMLTemplate(origin) {
         
         <div class="mb-4">
             <label class="block text-sm font-medium text-slate-300 mb-2">机场订阅链接（多行）</label>
-            <textarea id="linksInput" rows="6" class="w-true w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-sm focus:outline-none focus:border-blue-500 text-slate-200 placeholder-slate-600" placeholder="https://example.com/api/v1/client/subscribe?token=xxx&#10;https://another-airport.com/link?token=yyy"></textarea>
+            <textarea id="linksInput" rows="6" class="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-sm focus:outline-none focus:border-blue-500 text-slate-200 placeholder-slate-600" placeholder="https://example.com/api/v1/client/subscribe?token=xxx&#10;https://another-airport.com/link?token=yyy"></textarea>
         </div>
 
         <button onclick="saveConfig()" id="submitBtn" class="w-full bg-blue-600 hover:bg-blue-500 transition font-medium py-3 rounded-xl shadow-lg shadow-blue-600/20 text-white">
