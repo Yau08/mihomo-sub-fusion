@@ -68,7 +68,7 @@ export default {
             });
             if (!res.ok) return null;
             let text = await res.text();
-            
+
             // 自动检测并解码 Base64 订阅内容
             text = decodeSubscriptionContent(text);
             return text;
@@ -89,11 +89,15 @@ export default {
             const proxiesMatch = raw.match(/proxies:\s*\n([\s\S]*?)(?:\n[a-zA-Z-]+:|$)/);
             if (proxiesMatch && proxiesMatch[1]) {
               allProxiesText += "\n" + proxiesMatch[1];
-              
-              // 提取每个节点的 name 用于填充 🇺🇳 ALL 策略组（支持单行与多行 YAML 格式）
-              const nameMatches = proxiesMatch[1].matchAll(/-[\s\n]+name:\s*["']?([^"'\n]+)["']?/g);
+
+              // 提取每个节点的 name 用于填充 🇺🇳 ALL 策略组（兼容多种 YAML 节点表达格式）
+              const nameMatches = proxiesMatch[1].matchAll(
+                /(?:^\s*-\s*|^\s*|[,{]\s*)(?:"name"|'name'|name)\s*:\s*(?:"((?:\\.|[^"\\])*)"|'((?:''|[^'])*)'|([^,\r\n}\]]+))/gm
+              );
+
               for (const match of nameMatches) {
-                if (match[1]) rawProxyNames.push(match[1].trim());
+                const name = (match[1] || match[2] || match[3] || "").trim().replace(/''/g, "'");
+                if (name) rawProxyNames.push(name);
               }
             }
           } catch (e) {
@@ -445,10 +449,10 @@ function generateToken() {
 function decodeSubscriptionContent(text) {
   text = text.trim();
   // 如果不包含 proxies 且看起来像 Base64，则尝试解码
-  if (!text.includes("proxies:") && !text.includes("- name:")) {
+  if (!text.includes("proxies:")) {
     try {
       const decoded = atob(text);
-      if (decoded.includes("proxies:") || decoded.includes("- name:")) {
+      if (decoded.includes("proxies:")) {
         return decoded;
       }
     } catch (e) {
@@ -471,7 +475,7 @@ function getHTMLTemplate(origin) {
     <div class="max-w-xl w-full bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl">
         <h1 class="text-2xl font-bold mb-2 text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-indigo-500">Mihomo 订阅聚合管理器</h1>
         <p class="text-slate-400 text-sm mb-6">输入多个机场订阅链接（每行一个），系统将自动去重、拉取节点并套用你的定制分流模板。</p>
-        
+
         <div class="mb-4">
             <label class="block text-sm font-medium text-slate-300 mb-2">机场订阅链接（多行）</label>
             <textarea id="linksInput" rows="6" class="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-sm focus:outline-none focus:border-blue-500 text-slate-200 placeholder-slate-600" placeholder="https://example.com/api/v1/client/subscribe?token=xxx&#10;https://another-airport.com/link?token=yyy"></textarea>
@@ -537,7 +541,7 @@ function getHTMLTemplate(origin) {
 function dedent(text) {
   const lines = text.split('\n');
   let minIndent = Infinity;
-  
+
   // 找出所有非空行中，最小的“非零”缩进（从而精准抓出编辑器注入的空白）
   for (const line of lines) {
     if (line.trim() === '') continue;
