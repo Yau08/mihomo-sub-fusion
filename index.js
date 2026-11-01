@@ -395,8 +395,9 @@ rules:
   - "DOMAIN-SUFFIX,4399.com,DIRECT"
   - "MATCH,SELECT"`;
 
-        return new Response(finalConfig, {
-          headers: { "Content-Type": "text/yaml; charset=utf-8" },
+  const cleanConfig = finalConfig.split('\n').map(line => line.trimStart()).join('\n');
+  return new Response(cleanConfig, {
+  headers: { "Content-Type": "text/yaml; charset=utf-8" },
         });
 
       } catch (err) {
