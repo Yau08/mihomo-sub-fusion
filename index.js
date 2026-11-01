@@ -40,7 +40,7 @@ export default {
       }
     }
 
-    // 3. 生成最终 Mihomo 订阅路由 (/sub)
+    // 3. 生成最终 Mihomo 订阅路由
     if (path === "/sub") {
       const token = url.searchParams.get("token");
       let linksText = "";
