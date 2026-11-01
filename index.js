@@ -113,7 +113,7 @@ ipv6: true
 log-level: info
 external-controller: 127.0.0.1:9090
 
-# 自定义直连节点
+# 添加直连节点
 proxies:
   - name: "🏴‍☠️ ＤＩＲＥＣＴ"
     type: direct
