@@ -90,8 +90,8 @@ export default {
             if (proxiesMatch && proxiesMatch[1]) {
               allProxiesText += "\n" + proxiesMatch[1];
               
-              // 提取每个节点的 name 用于填充 🇺🇳 ALL 策略组
-              const nameMatches = proxiesMatch[1].matchAll(/- name:\s*["']?([^"'\n]+)["']?/g);
+              // 提取每个节点的 name 用于填充 🇺🇳 ALL 策略组（支持单行与多行 YAML 格式）
+              const nameMatches = proxiesMatch[1].matchAll(/-[\s\n]+name:\s*["']?([^"'\n]+)["']?/g);
               for (const match of nameMatches) {
                 if (match[1]) rawProxyNames.push(match[1].trim());
               }
@@ -103,6 +103,13 @@ export default {
 
         // 去重节点名称
         const uniqueNames = Array.from(new Set(rawProxyNames));
+
+        // 🛡️ 核心防线：如果机场订阅整体崩掉导致拉不到任何节点，直接返回 500 错误
+        // 这样客户端更新订阅会失败并报错提示，从而完美保留客户端原有的本地有效节点缓存！
+        if (uniqueNames.length === 0) {
+          return new Response("Error: Failed to fetch or parse proxies from subscription links", { status: 500 });
+        }
+
         const uniqueProxyNames = uniqueNames.map(n => `      - "${n}"`).join('\n');
 
         const getGroupProxies = (regex) => {
