@@ -115,7 +115,7 @@ external-controller: 127.0.0.1:9090
 
 # 自定义直连节点
 proxies:
-  - name: "ＤＩＲＥＣＴ"
+  - name: "🏴‍☠️ ＤＩＲＥＣＴ"
     type: direct
     udp: true
 ${allProxiesText}
@@ -126,7 +126,7 @@ proxy-groups:
     type: select
     proxies:
       - "🇺🇳 ALL"
-      - "ＤＩＲＥＣＴ"
+      - "🏴‍☠️ ＤＩＲＥＣＴ"
       - "🇹🇼 ROC"
       - "🇭🇰 HKG"
       - "🇯🇵 JPN"
