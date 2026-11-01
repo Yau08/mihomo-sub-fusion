@@ -1,4 +1,4 @@
-export default {
+Export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const path = url.pathname;
@@ -80,7 +80,7 @@ export default {
         const rawResults = await Promise.all(fetchPromises);
 
         let allProxiesText = "";
-        let proxyNames = [];
+        let rawProxyNames = [];
 
         for (const raw of rawResults) {
           if (!raw) continue;
@@ -93,7 +93,7 @@ export default {
               // 提取每个节点的 name 用于填充 🇺🇳 ALL 策略组
               const nameMatches = proxiesMatch[1].matchAll(/- name:\s*["']?([^"'\n]+)["']?/g);
               for (const match of nameMatches) {
-                if (match[1]) proxyNames.push(`      - "${match[1].trim()}"`);
+                if (match[1]) rawProxyNames.push(match[1].trim());
               }
             }
           } catch (e) {
@@ -102,7 +102,24 @@ export default {
         }
 
         // 去重节点名称
-        const uniqueProxyNames = Array.from(new Set(proxyNames)).join('\n');
+        const uniqueNames = Array.from(new Set(rawProxyNames));
+        const uniqueProxyNames = uniqueNames.map(n => `      - "${n}"`).join('\n');
+
+        const getGroupProxies = (regex) => {
+          const matched = uniqueNames.filter(n => regex.test(n));
+          if (matched.length > 0) {
+            return matched.map(n => `      - "${n}"`).join('\n');
+          } else {
+            return `      - "🏴‍☠️ ＤＩＲＥＣＴ"`;
+          }
+        };
+
+        const rocProxies = getGroupProxies(/台湾|TW|tw|Taiwan|ROC|台灣|臺灣|湾|灣|中华|中華|民国|民國|中华民国|中華民國|🇹🇼/i);
+        const hkgProxies = getGroupProxies(/香港|HK|hk|Hong Kong|Hong|HONG|港|🇭🇰/i);
+        const jpnProxies = getGroupProxies(/日本|JP|Japan|日|🇯🇵/i);
+        const korProxies = getGroupProxies(/韩国|KR|Korea|韩|韓|🇰🇷/i);
+        const sgpProxies = getGroupProxies(/新加坡|SG|Singapore|新|坡|狮|獅|🇸🇬/i);
+        const usaProxies = getGroupProxies(/美国|US|USA|United States|United|UNITED|States|America|美|米|🇺🇸/i);
 
         // 拼装完整的 Mihomo 配置模板
         const finalConfig = `Mixed-port: 7890
@@ -141,45 +158,51 @@ ${uniqueProxyNames}
 
   - name: "🇹🇼 ROC"
     type: url-test
-    filter: "(?i)台湾|TW|tw|Taiwan|ROC|台灣|臺灣|湾|灣|中华|中華|民国|民國|中华民国|中華民國|🇹🇼"
     url: "http://www.gstatic.com/generate_204"
     interval: 900
     tolerance: 150
+    proxies:
+${rocProxies}
 
   - name: "🇭🇰 HKG"
     type: url-test
-    filter: "(?i)香港|HK|hk|Hong Kong|Hong|HONG|港|🇭🇰"
     url: "http://www.gstatic.com/generate_204"
     interval: 900
     tolerance: 150
+    proxies:
+${hkgProxies}
 
   - name: "🇯🇵 JPN"
     type: url-test
-    filter: "(?i)日本|JP|Japan|日|🇯🇵"
     url: "http://www.gstatic.com/generate_204"
     interval: 900
     tolerance: 150
+    proxies:
+${jpnProxies}
 
   - name: "🇰🇷 KOR"
     type: url-test
-    filter: "(?i)韩国|KR|Korea|韩|韓|🇰🇷"
     url: "http://www.gstatic.com/generate_204"
     interval: 900
     tolerance: 150
+    proxies:
+${korProxies}
 
   - name: "🇸🇬 SGP"
     type: url-test
-    filter: "(?i)新加坡|SG|Singapore|新|坡|狮|獅|🇸🇬"
     url: "http://www.gstatic.com/generate_204"
     interval: 900
     tolerance: 150
+    proxies:
+${sgpProxies}
 
   - name: "🇺🇸 USA"
     type: url-test
-    filter: "(?i)美国|US|USA|United States|United|UNITED|States|America|美|米|🇺🇸"
     url: "http://www.gstatic.com/generate_204"
     interval: 900
     tolerance: 150
+    proxies:
+${usaProxies}
 
 # DNS 配置
 dns:
