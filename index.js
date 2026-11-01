@@ -185,7 +185,6 @@ ${uniqueProxyNames}
 dns:
   enable: true
   listen: "0.0.0.0:10053"
-  ipv6: true
   enhanced-mode: "fake-ip"
   fake-ip-range: "198.18.0.1/16"
   use-hosts: true
