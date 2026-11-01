@@ -110,7 +110,7 @@ allow-lan: true
 bind-address: "*"
 mode: rule
 ipv6: true
-log-level: info
+log-level: warning
 external-controller: 127.0.0.1:9090
 
 # 添加直连节点
@@ -507,13 +507,29 @@ function getHTMLTemplate(origin) {
 }
 function dedent(text) {
   const lines = text.split('\n');
-  let minIndent = 999;
+  let minIndent = Infinity;
+  
+  // 找出所有非空行中，最小的“非零”缩进（从而精准抓出编辑器注入的空白）
   for (const line of lines) {
     if (line.trim() === '') continue;
     const match = line.match(/^(\s*)/);
-    if (match && match[1].length < minIndent) {
-      minIndent = match[1].length;
+    if (match) {
+      const indentLen = match[1].length;
+      // 只统计缩进大于 0 的行，防止第一行的 0 把计算带偏
+      if (indentLen > 0 && indentLen < minIndent) {
+        minIndent = indentLen;
+      }
     }
   }
-  return lines.map(line => line.slice(minIndent)).join('\n');
+
+  if (minIndent === Infinity || minIndent === 0) return text;
+
+  // 统一削掉编辑器注入的那个巨型基准缩进
+  return lines.map(line => {
+    const match = line.match(/^(\s*)/);
+    if (match && match[1].length >= minIndent) {
+      return line.slice(minIndent);
+    }
+    return line;
+  }).join('\n');
 }
