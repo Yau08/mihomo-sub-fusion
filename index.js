@@ -85,32 +85,34 @@ export default {
         for (const raw of rawResults) {
           if (!raw) continue;
           try {
-            const rawText = raw.replace(/\r\n/g, '\n');
-            const lines = rawText.split('\n');
-            let proxiesContent = [];
-            let capturing = false;
-            
-            // 精准逐行提取 proxies 节点块，完全杜绝正则匹配漏洞
-            for (let i = 0; i < lines.length; i++) {
-              const line = lines[i];
-              if (/^[ \t]*proxies:[ \t]*$/.test(line) || /^[ \t]*proxies:[ \t]*\S/.test(line)) {
-                capturing = true;
-                continue;
-              }
-              if (capturing) {
-                if (/^[a-zA-Z_-]+[ \t]*:/.test(line)) {
+            const lines = raw.replace(/\r\n/g, '\n').split('\n');
+            let proxiesLines = [];
+            let inProxies = false;
+            let baseIndent = -1;
+
+            // 严谨的行状态机解析：完美兼容不同缩进、无引号、单双引号及多机场混合格式
+            for (let line of lines) {
+              const trimmed = line.trim();
+              if (!inProxies) {
+                if (/^proxies\s*:/i.test(trimmed)) {
+                  inProxies = true;
+                  continue;
+                }
+              } else {
+                // 如果遇到其他顶层配置项（行首无空格且含冒号），则退出 proxies 块
+                if (/^[a-zA-Z_-]+\s*:/i.test(line) && !line.startsWith(' ') && !line.startsWith('\t')) {
                   break;
                 }
-                proxiesContent.push(line);
+                proxiesLines.push(line);
               }
             }
 
-            const extractedProxiesText = proxiesContent.join('\n').trim();
-            if (extractedProxiesText) {
-              allProxiesText += "\n" + extractedProxiesText;
+            const extractedText = proxiesLines.join('\n').trim();
+            if (extractedText) {
+              allProxiesText += "\n" + extractedText;
 
               // 提取每个节点的 name 用于填充 🇺🇳 ALL 策略组（兼容多种 YAML 节点表达格式）
-              const nameMatches = extractedProxiesText.matchAll(
+              const nameMatches = extractedText.matchAll(
                 /(?:^\s*-\s*|^\s*|[,{]\s*)(?:"name"|'name'|name)\s*:\s*(?:"((?:\\.|[^"\\])*)"|'((?:''|[^'])*)'|([^,\r\n}\]]+))/gm
               );
 
@@ -485,13 +487,13 @@ function getHTMLTemplate(origin) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Mihomo 订阅聚合分发控制台</title>
+    <title>Mihomo订阅聚合分发控制台</title>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-slate-950 text-slate-100 min-h-screen flex items-center justify-center p-4">
     <div class="max-w-xl w-full bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl">
         <h1 class="text-2xl font-bold mb-2 text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-indigo-500">Mihomo 订阅聚合管理器</h1>
-        <p class="text-slate-400 text-sm mb-6">输入多个机场订阅链接（每行一个），系统将自动去重、拉取节点并套用你的定制分流模板。</p>
+        <p class="text-slate-400 text-sm mb-6">输入多个机场订阅链接（每行一个），系统将自动去重、拉取节点并套用定制分流模板。</p>
 
         <div class="mb-4">
             <label class="block text-sm font-medium text-slate-300 mb-2">机场订阅链接（多行）</label>
@@ -503,7 +505,7 @@ function getHTMLTemplate(origin) {
         </button>
 
         <div id="resultBox" class="mt-6 hidden">
-            <label class="block text-sm font-medium text-slate-300 mb-2">你的专属代理软件导入链接（/sub）</label>
+            <label class="block text-sm font-medium text-slate-300 mb-2">您的代理软件专属订阅链接</label>
             <div class="flex gap-2">
                 <input type="text" id="subUrlOutput" readonly class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 text-xs text-blue-400 select-all">
                 <button onclick="copyUrl()" class="bg-slate-800 hover:bg-slate-700 px-4 py-2 rounded-xl text-xs font-medium shrink-0">复制</button>
