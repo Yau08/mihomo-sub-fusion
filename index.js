@@ -59,21 +59,49 @@ export default {
 
       const subscriptionUrls = linksText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
 
-      if (subscriptionUrls.length === 0) {
-        return new Response("Error: Subscription links are empty", { status: 400 });
-      }
-
       try {
-        // 动态生成 proxy-providers 和 use 列表
-        let proxyProvidersText = "";
-        let useArrayText = "";
-        subscriptionUrls.forEach((subUrl, idx) => {
-          const providerName = `airport_${idx + 1}`;
-          proxyProvidersText += `  ${providerName}:\n    type: http\n    url: "${subUrl}"\n    interval: 86400\n    path: ./proxies/airport_${idx + 1}.yaml\n    health-check:\n      enable: true\n      url: "http://www.gstatic.com/generate_204"\n      interval: 300\n`;
-          useArrayText += `      - "${providerName}"\n`;
+        // 并发请求所有机场订阅
+        const fetchPromises = subscriptionUrls.map(async (subUrl) => {
+          try {
+            const res = await fetch(subUrl, {
+              headers: { 'User-Agent': 'ClashMeta/1.16.0' }
+            });
+            if (!res.ok) return null;
+            let text = await res.text();
+
+            // 自动检测并解码 Base64 订阅内容
+            text = decodeSubscriptionContent(text);
+            return text;
+          } catch (err) {
+            return null;
+          }
         });
 
-        // 拼装完整的 Mihomo 配置模板（通过 proxy-providers 原生托管多机场订阅）
+        const rawResults = await Promise.all(fetchPromises);
+
+        let allProxiesBlocks = "";
+        let hasValidProxies = false;
+
+        // 原封不动提取每个机场的 proxies 区域并合并
+        for (const raw of rawResults) {
+          if (!raw) continue;
+          try {
+            const extracted = extractProxiesBlock(raw);
+            if (extracted) {
+              allProxiesBlocks += "\n" + extracted;
+              hasValidProxies = true;
+            }
+          } catch (e) {
+            console.error("Extract error", e);
+          }
+        }
+
+        // 🛡️ 核心防线：如果拉不到任何有效节点，返回 500 保护客户端缓存
+        if (!hasValidProxies) {
+          return new Response("Error: Failed to fetch or parse proxies from subscription links", { status: 500 });
+        }
+
+        // 拼装完整的 Mihomo 配置模板（使用 include-all 由内核自动收集和过滤）
         const finalConfig = `Mixed-port: 7890
 allow-lan: true
 bind-address: "*"
@@ -87,10 +115,7 @@ proxies:
   - name: "🏴‍☠️ ＤＩＲＥＣＴ"
     type: direct
     udp: true
-
-# 节点提供商配置（交由客户端原生下载和解析各机场订阅）
-proxy-providers:
-${proxyProvidersText}
+${allProxiesBlocks}
 
 # 策略组配置
 proxy-groups:
@@ -108,16 +133,14 @@ proxy-groups:
 
   - name: "🇺🇳 ALL"
     type: select
-    use:
-${useArrayText}
+    include-all: true
 
   - name: "🇹🇼 ROC"
     type: url-test
     url: "http://www.gstatic.com/generate_204"
     interval: 900
     tolerance: 150
-    use:
-${useArrayText}
+    include-all: true
     filter: "(?i)台湾|TW|tw|Taiwan|ROC|台灣|臺灣|湾|灣|中华|中華|民国|民國|中华民国|中華民國|🇹🇼"
 
   - name: "🇭🇰 HKG"
@@ -125,8 +148,7 @@ ${useArrayText}
     url: "http://www.gstatic.com/generate_204"
     interval: 900
     tolerance: 150
-    use:
-${useArrayText}
+    include-all: true
     filter: "(?i)香港|HK|hk|Hong Kong|Hong|HONG|港|🇭🇰"
 
   - name: "🇯🇵 JPN"
@@ -134,8 +156,7 @@ ${useArrayText}
     url: "http://www.gstatic.com/generate_204"
     interval: 900
     tolerance: 150
-    use:
-${useArrayText}
+    include-all: true
     filter: "(?i)日本|JP|Japan|日|🇯🇵"
 
   - name: "🇰🇷 KOR"
@@ -143,8 +164,7 @@ ${useArrayText}
     url: "http://www.gstatic.com/generate_204"
     interval: 900
     tolerance: 150
-    use:
-${useArrayText}
+    include-all: true
     filter: "(?i)韩国|KR|Korea|韩|韓|🇰🇷"
 
   - name: "🇸🇬 SGP"
@@ -152,8 +172,7 @@ ${useArrayText}
     url: "http://www.gstatic.com/generate_204"
     interval: 900
     tolerance: 150
-    use:
-${useArrayText}
+    include-all: true
     filter: "(?i)新加坡|SG|Singapore|新|坡|狮|獅|🇸🇬"
 
   - name: "🇺🇸 USA"
@@ -161,8 +180,7 @@ ${useArrayText}
     url: "http://www.gstatic.com/generate_204"
     interval: 900
     tolerance: 150
-    use:
-${useArrayText}
+    include-all: true
     filter: "(?i)美国|US|USA|United States|United|UNITED|States|America|美|米|🇺🇸"
 
 # DNS 配置
@@ -208,63 +226,63 @@ dns:
     - "time.*.edu.cn"
     - "time.*.apple.com"
     - "*.msftconnecttest.com"
-    - "*.msftncsi.com"
-    - "dns.msftncsi.com"
-    - "captive.apple.com"
-    - "stun.l.google.com"
-    - "*.xboxlive.com"
-    - "*.battlenet.com.cn"
-    - "*.blizzard.cn"
-    - "*.pvp.net"
-    - "*.moba.qq.com"
-    - "*.stun.*.*"
-    - "*.stun.*.*.*"
-    - "*.stun.*.*.*.*"
-    - "*.synology.com"
-    - "*.myqnapcloud.com"
-    - "_tcp.*"
-    - "_udp.*"
-    - "_services._dns-sd._udp.*"
-  default-nameserver:
-    - "119.29.29.29"
-    - "223.5.5.5"
-  proxy-server-nameserver:
-    - "https://doh.pub/dns-query"
-    - "https://doh.baidu.com/dns-query"
-  nameserver:
-    - "https://dns.google/dns-query"
-    - "https://cloudflare-dns.com/dns-query"
-  nameserver-policy:
-    "geosite:cn":
-      - "119.29.29.29"
-      - "223.5.5.5"
-    "*.cn":
-      - "119.29.29.29"
-      - "223.5.5.5"
-  fallback:
-    - "8.8.8.8"
-    - "1.1.1.1"
-  fallback-filter:
-    geoip: true
-    geoip-code: "CN"
-    geosite:
-      - "gfw"
-      - "greatfire"
-    ipcidr:
-      - "0.0.0.0/8"
-      - "10.0.0.0/8"
-      - "100.64.0.0/10"
-      - "127.0.0.0/8"
-      - "169.254.0.0/16"
-      - "172.16.0.0/12"
-      - "192.168.0.0/16"
-      - "198.18.0.0/15"
-      - "224.0.0.0/4"
-      - "240.0.0.0/4"
-    domain:
-      - "+.google.com"
-      - "+.facebook.com"
-      - "+.youtube.com"
+        - "*.msftncsi.com"
+        - "dns.msftncsi.com"
+        - "captive.apple.com"
+        - "stun.l.google.com"
+        - "*.xboxlive.com"
+        - "*.battlenet.com.cn"
+        - "*.blizzard.cn"
+        - "*.pvp.net"
+        - "*.moba.qq.com"
+        - "*.stun.*.*"
+        - "*.stun.*.*.*"
+        - "*.stun.*.*.*.*"
+        - "*.synology.com"
+        - "*.myqnapcloud.com"
+        - "_tcp.*"
+        - "_udp.*"
+        - "_services._dns-sd._udp.*"
+      default-nameserver:
+        - "119.29.29.29"
+        - "223.5.5.5"
+      proxy-server-nameserver:
+        - "https://doh.pub/dns-query"
+        - "https://doh.baidu.com/dns-query"
+      nameserver:
+        - "https://dns.google/dns-query"
+        - "https://cloudflare-dns.com/dns-query"
+      nameserver-policy:
+        "geosite:cn":
+          - "119.29.29.29"
+          - "223.5.5.5"
+        "*.cn":
+          - "119.29.29.29"
+          - "223.5.5.5"
+      fallback:
+        - "8.8.8.8"
+        - "1.1.1.1"
+      fallback-filter:
+        geoip: true
+        geoip-code: "CN"
+        geosite:
+          - "gfw"
+          - "greatfire"
+        ipcidr:
+          - "0.0.0.0/8"
+          - "10.0.0.0/8"
+          - "100.64.0.0/10"
+          - "127.0.0.0/8"
+          - "169.254.0.0/16"
+          - "172.16.0.0/12"
+          - "192.168.0.0/16"
+          - "198.18.0.0/15"
+          - "224.0.0.0/4"
+          - "240.0.0.0/4"
+        domain:
+          - "+.google.com"
+          - "+.facebook.com"
+          - "+.youtube.com"
 
 # 规则配置
 rules:
@@ -390,6 +408,7 @@ rules:
     return new Response("Not Found", { status: 404 });
   }
 };
+
 function generateToken() {
   return Math.random().toString(36).substring(2) + Date.now().toString(36);
 }
@@ -409,6 +428,47 @@ function decodeSubscriptionContent(text) {
   return text;
 }
 
+// 状态机：整块原封不动提取 proxies 区块（兼容多行、单行大括号等任意格式）
+function extractProxiesBlock(raw) {
+  const lines = raw.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+  let proxiesIndex = -1;
+  let proxiesIndent = 0;
+
+  for (let i = 0; i < lines.length; i++) {
+    const match = /^([ \t]*)proxies\s*:\s*(?:#.*)?$/i.exec(lines[i]);
+    if (match) {
+      proxiesIndex = i;
+      proxiesIndent = match[1].replace(/\t/g, "    ").length;
+      break;
+    }
+  }
+
+  if (proxiesIndex === -1) return null;
+
+  const blockLines = [];
+  for (let i = proxiesIndex + 1; i < lines.length; i++) {
+    const line = lines[i];
+    const trimmed = line.trim();
+
+    if (!trimmed || trimmed.startsWith('#')) {
+      blockLines.push(line);
+      continue;
+    }
+
+    const match = /^([ \t]*)/.exec(line);
+    const indent = match ? match[1].replace(/\t/g, "    ").length : 0;
+
+    // 遇到下一个同级或高级顶层键，退出
+    if (indent <= proxiesIndent && /^[^#\s][^:]*\s*:/.test(line)) {
+      break;
+    }
+
+    blockLines.push(line);
+  }
+
+  return blockLines.join('\n').trim();
+}
+
 function getHTMLTemplate(origin) {
   return `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -421,7 +481,7 @@ function getHTMLTemplate(origin) {
 <body class="bg-slate-950 text-slate-100 min-h-screen flex items-center justify-center p-4">
     <div class="max-w-xl w-full bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl">
         <h1 class="text-2xl font-bold mb-2 text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-indigo-500">Mihomo 订阅聚合管理器</h1>
-        <p class="text-slate-400 text-sm mb-6">输入多个机场订阅链接（每行一个），系统将自动下发提供商配置，交由客户端原生解析所有节点。</p>
+        <p class="text-slate-400 text-sm mb-6">输入多个机场订阅链接（每行一个），系统将自动抓取并原地合并多个机场的节点。</p>
 
         <div class="mb-4">
             <label class="block text-sm font-medium text-slate-300 mb-2">机场订阅链接（多行）</label>
