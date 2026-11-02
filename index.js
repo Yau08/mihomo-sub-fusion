@@ -28,7 +28,7 @@ export default {
         }
 
         const token = generateToken();
-        await env.SUB_KV.put(token, links); // 不设置过期时间，永久保存
+        await env.SUB_KV.put(token, links); // 永久保存，永不过期
 
         return new Response(JSON.stringify({ success: true, token, url: `${url.origin}/sub?token=${token}` }), {
           headers: { "Content-Type": "application/json" },
@@ -59,94 +59,21 @@ export default {
 
       const subscriptionUrls = linksText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
 
-      try {
-        // 并发请求所有机场订阅
-        const fetchPromises = subscriptionUrls.map(async (subUrl) => {
-          try {
-            const res = await fetch(subUrl, {
-              headers: { 'User-Agent': 'ClashMeta/1.16.0' }
-            });
-            if (!res.ok) return null;
-            let text = await res.text();
+      if (subscriptionUrls.length === 0) {
+        return new Response("Error: Subscription links are empty", { status: 400 });
+      }
 
-            // 自动检测并解码 Base64 订阅内容
-            text = decodeSubscriptionContent(text);
-            return text;
-          } catch (err) {
-            return null;
-          }
+      try {
+        // 动态生成 proxy-providers 和 use 列表
+        let proxyProvidersText = "";
+        let useArrayText = "";
+        subscriptionUrls.forEach((subUrl, idx) => {
+          const providerName = `airport_${idx + 1}`;
+          proxyProvidersText += `  ${providerName}:\n    type: http\n    url: "${subUrl}"\n    interval: 86400\n    path: ./proxies/airport_${idx + 1}.yaml\n    health-check:\n      enable: true\n      url: "http://www.gstatic.com/generate_204"\n      interval: 300\n`;
+          useArrayText += `      - "${providerName}"\n`;
         });
 
-        const rawResults = await Promise.all(fetchPromises);
-
-        let allProxiesText = "";
-        let rawProxyNames = [];
-        let airportIdx = 0;
-
-        for (const raw of rawResults) {
-          if (!raw) continue;
-
-          try {
-            const parsed = extractProxyNodes(raw);
-            if (!parsed || parsed.nodes.length === 0) {
-              console.error("Parse error: proxies module or nodes not found");
-              continue;
-            }
-
-            const currentAirportIdx = airportIdx + 1;
-            const airportNodes = [];
-            const airportNames = [];
-            const nameCounts = new Map();
-            let airportValid = true;
-
-            // 独立识别并处理每一个节点
-            for (const node of parsed.nodes) {
-              const result = renameProxyNode(node, currentAirportIdx);
-
-              if (!result || !result.name) {
-                airportValid = false;
-                console.error("Parse error: proxy name not found");
-                break;
-              }
-
-              // 防止同一机场内出现重复节点名称
-              let uniqueName = result.name;
-              const count = (nameCounts.get(uniqueName) || 0) + 1;
-              nameCounts.set(uniqueName, count);
-
-              if (count > 1) {
-                uniqueName = `${uniqueName} (${count})`;
-                result.text = replaceProxyName(result.text, uniqueName);
-              }
-
-              airportNames.push(uniqueName);
-              airportNodes.push(normalizeProxyIndent(result.text, parsed.listIndent));
-            }
-
-            // 只有整个机场的节点均成功识别，才纳入最终配置
-            if (!airportValid || airportNodes.length !== parsed.nodes.length) {
-              console.error(`Airport ${currentAirportIdx} parse validation failed`);
-              continue;
-            }
-
-            airportIdx++;
-            allProxiesText += "\n" + airportNodes.join("\n");
-            rawProxyNames.push(...airportNames);
-
-          } catch (e) {
-            console.error("Parse error", e);
-          }
-        }
-
-        // 去重节点名称
-        const uniqueNames = Array.from(new Set(rawProxyNames));
-
-        // 🛡️ 核心防线：如果机场订阅整体崩掉导致拉不到任何节点，直接返回 500 错误
-        if (uniqueNames.length === 0) {
-          return new Response("Error: Failed to fetch or parse proxies from subscription links", { status: 500 });
-        }
-
-        // 拼装完整的 Mihomo 配置模板（已应用 include-all 特性）
+        // 拼装完整的 Mihomo 配置模板（通过 proxy-providers 原生托管多机场订阅）
         const finalConfig = `Mixed-port: 7890
 allow-lan: true
 bind-address: "*"
@@ -160,7 +87,10 @@ proxies:
   - name: "🏴‍☠️ ＤＩＲＥＣＴ"
     type: direct
     udp: true
-${allProxiesText}
+
+# 节点提供商配置（交由客户端原生下载和解析各机场订阅）
+proxy-providers:
+${proxyProvidersText}
 
 # 策略组配置
 proxy-groups:
@@ -178,14 +108,16 @@ proxy-groups:
 
   - name: "🇺🇳 ALL"
     type: select
-    include-all: true
+    use:
+${useArrayText}
 
   - name: "🇹🇼 ROC"
     type: url-test
     url: "http://www.gstatic.com/generate_204"
     interval: 900
     tolerance: 150
-    include-all: true
+    use:
+${useArrayText}
     filter: "(?i)台湾|TW|tw|Taiwan|ROC|台灣|臺灣|湾|灣|中华|中華|民国|民國|中华民国|中華民國|🇹🇼"
 
   - name: "🇭🇰 HKG"
@@ -193,7 +125,8 @@ proxy-groups:
     url: "http://www.gstatic.com/generate_204"
     interval: 900
     tolerance: 150
-    include-all: true
+    use:
+${useArrayText}
     filter: "(?i)香港|HK|hk|Hong Kong|Hong|HONG|港|🇭🇰"
 
   - name: "🇯🇵 JPN"
@@ -201,7 +134,8 @@ proxy-groups:
     url: "http://www.gstatic.com/generate_204"
     interval: 900
     tolerance: 150
-    include-all: true
+    use:
+${useArrayText}
     filter: "(?i)日本|JP|Japan|日|🇯🇵"
 
   - name: "🇰🇷 KOR"
@@ -209,7 +143,8 @@ proxy-groups:
     url: "http://www.gstatic.com/generate_204"
     interval: 900
     tolerance: 150
-    include-all: true
+    use:
+${useArrayText}
     filter: "(?i)韩国|KR|Korea|韩|韓|🇰🇷"
 
   - name: "🇸🇬 SGP"
@@ -217,7 +152,8 @@ proxy-groups:
     url: "http://www.gstatic.com/generate_204"
     interval: 900
     tolerance: 150
-    include-all: true
+    use:
+${useArrayText}
     filter: "(?i)新加坡|SG|Singapore|新|坡|狮|獅|🇸🇬"
 
   - name: "🇺🇸 USA"
@@ -225,7 +161,8 @@ proxy-groups:
     url: "http://www.gstatic.com/generate_204"
     interval: 900
     tolerance: 150
-    include-all: true
+    use:
+${useArrayText}
     filter: "(?i)美国|US|USA|United States|United|UNITED|States|America|美|米|🇺🇸"
 
 # DNS 配置
@@ -441,8 +378,7 @@ rules:
   - "DOMAIN-SUFFIX,4399.com,DIRECT"
   - "MATCH,SELECT"`;
 
-        const cleanConfig = finalConfig;
-        return new Response(cleanConfig, {
+        return new Response(finalConfig, {
           headers: { "Content-Type": "text/yaml; charset=utf-8" },
         });
 
@@ -473,295 +409,6 @@ function decodeSubscriptionContent(text) {
   return text;
 }
 
-// 提取 proxies 模块中的独立节点，同时兼容多行缩进格式与单行 Flow Mapping（大括号内联）格式
-function extractProxyNodes(raw) {
-  const lines = raw.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
-
-  let proxiesIndex = -1;
-  let proxiesIndent = 0;
-
-  for (let i = 0; i < lines.length; i++) {
-    const match = /^([ \t]*)proxies\s*:\s*(?:#.*)?$/i.exec(lines[i]);
-    if (match) {
-      proxiesIndex = i;
-      proxiesIndent = match[1].replace(/\t/g, "    ").length;
-      break;
-    }
-  }
-
-  if (proxiesIndex === -1) return null;
-
-  const nodes = [];
-  let listIndent = -1;
-  let currentNode = [];
-
-  const getIndent = (line) => {
-    const match = /^[ \t]*/.exec(line);
-    return match ? match[0].replace(/\t/g, "    ").length : 0;
-  };
-
-  const isSequenceItem = (line) => {
-    return /^[ \t]*-\s*(?:$|\S)/.test(line);
-  };
-
-  const flushNode = () => {
-    const content = currentNode.join('\n').trim();
-    if (content) nodes.push(content);
-    currentNode = [];
-  };
-
-  for (let i = proxiesIndex + 1; i < lines.length; i++) {
-    const line = lines[i];
-    const trimmed = line.trim();
-
-    if (!trimmed || trimmed.startsWith('#')) {
-      if (currentNode.length > 0) currentNode.push(line);
-      continue;
-    }
-
-    const indent = getIndent(line);
-
-    // 遇到下一个同级或更高级的配置项，结束 proxies 模块
-    if (indent <= proxiesIndent && /^[^#\s][^:]*\s*:/.test(line)) {
-      break;
-    }
-
-    if (isSequenceItem(line)) {
-      if (listIndent === -1) {
-        listIndent = indent;
-      } else if (indent === listIndent) {
-        flushNode();
-      } else if (indent < listIndent) {
-        break;
-      }
-    }
-
-    if (listIndent !== -1) {
-      currentNode.push(line);
-    }
-  }
-
-  flushNode();
-
-  // 如果常规多行解析没抓到，尝试将整段 proxies 文本进行 Flow Mapping 单行大括号节点提取（兼容机场 B）
-  if (nodes.length === 0) {
-    let rawProxiesBlock = [];
-    for (let i = proxiesIndex + 1; i < lines.length; i++) {
-      const line = lines[i];
-      const indent = getIndent(line);
-      if (indent <= proxiesIndent && /^[^#\s][^:]*\s*:/.test(line)) break;
-      rawProxiesBlock.push(line);
-    }
-    const blockText = rawProxiesBlock.join('\n');
-    // 匹配类似 - { name: '...', ... } 或 - name: '...' 的扁平单行结构
-    const flowMatches = blockText.matchAll(/^[ \t]*-[ \t]*(\{[\s\S]*?\})/gm);
-    for (const fm of flowMatches) {
-      nodes.push(fm[1].trim());
-    }
-    if (nodes.length > 0) {
-      return { nodes, listIndent: proxiesIndent + 2 };
-    }
-  }
-
-  if (nodes.length === 0 || listIndent === -1) return null;
-
-  return { nodes, listIndent };
-}
-
-// 识别并修改单个节点的 name 字段（同时支持多行结构与单行 Flow Mapping 大括号结构）
-function renameProxyNode(nodeText, airportIdx) {
-  const nameRegex = /^[ \t]*(?:-[ \t]*)?(?:"name"|'name'|name)\s*:\s*|[,{][ \t]*(?:"name"|'name'|name)\s*:\s*/gm;
-  const match = nameRegex.exec(nodeText);
-
-  if (!match) return null;
-
-  const valueStart = match.index + match[0].length;
-  const quote = nodeText[valueStart];
-
-  let valueEnd = valueStart;
-  let rawName = "";
-
-  // 双引号名称
-  if (quote === '"') {
-    valueEnd = valueStart + 1;
-    let escaped = false;
-
-    while (valueEnd < nodeText.length) {
-      const char = nodeText[valueEnd];
-
-      if (escaped) {
-        escaped = false;
-      } else if (char === '\\') {
-        escaped = true;
-      } else if (char === '"') {
-        break;
-      }
-
-      valueEnd++;
-    }
-
-    if (valueEnd >= nodeText.length) return null;
-
-    const rawValue = nodeText.slice(valueStart, valueEnd + 1);
-
-    try {
-      rawName = JSON.parse(rawValue);
-    } catch (e) {
-      rawName = nodeText.slice(valueStart + 1, valueEnd);
-    }
-
-    valueEnd++;
-  }
-  // 单引号名称
-  else if (quote === "'") {
-    valueEnd = valueStart + 1;
-
-    while (valueEnd < nodeText.length) {
-      if (nodeText[valueEnd] === "'") {
-        if (nodeText[valueEnd + 1] === "'") {
-          valueEnd += 2;
-          continue;
-        }
-        break;
-      }
-      valueEnd++;
-    }
-
-    if (valueEnd >= nodeText.length) return null;
-
-    rawName = nodeText.slice(valueStart + 1, valueEnd).replace(/''/g, "'");
-    valueEnd++;
-  }
-  // 无引号名称
-  else {
-    valueEnd = valueStart;
-
-    while (
-      valueEnd < nodeText.length &&
-      nodeText[valueEnd] !== '\n' &&
-      nodeText[valueEnd] !== '\r' &&
-      nodeText[valueEnd] !== ',' &&
-      nodeText[valueEnd] !== '}'
-    ) {
-      valueEnd++;
-    }
-
-    rawName = nodeText.slice(valueStart, valueEnd).trim();
-  }
-
-  rawName = String(rawName).trim();
-  if (!rawName) return null;
-
-  const uniqueName = `[${airportIdx}] ${rawName}`;
-  const escapedName = uniqueName
-    .replace(/\\/g, '\\\\')
-    .replace(/"/g, '\\"');
-
-  const modifiedText =
-    nodeText.slice(0, valueStart) +
-    `"${escapedName}"` +
-    nodeText.slice(valueEnd);
-
-  return {
-    name: uniqueName,
-    text: modifiedText
-  };
-}
-
-// 替换已识别节点的名称
-function replaceProxyName(nodeText, newName) {
-  const nameRegex = /^[ \t]*(?:-[ \t]*)?(?:"name"|'name'|name)\s*:\s*|[,{][ \t]*(?:"name"|'name'|name)\s*:\s*/gm;
-  const match = nameRegex.exec(nodeText);
-
-  if (!match) return nodeText;
-
-  const valueStart = match.index + match[0].length;
-  const quote = nodeText[valueStart];
-
-  let valueEnd = valueStart;
-
-  if (quote === '"') {
-    valueEnd = valueStart + 1;
-    let escaped = false;
-
-    while (valueEnd < nodeText.length) {
-      const char = nodeText[valueEnd];
-
-      if (escaped) {
-        escaped = false;
-      } else if (char === '\\') {
-        escaped = true;
-      } else if (char === '"') {
-        break;
-      }
-
-      valueEnd++;
-    }
-
-    if (valueEnd >= nodeText.length) return nodeText;
-    valueEnd++;
-  } else if (quote === "'") {
-    valueEnd = valueStart + 1;
-
-    while (valueEnd < nodeText.length) {
-      if (nodeText[valueEnd] === "'") {
-        if (nodeText[valueEnd + 1] === "'") {
-          valueEnd += 2;
-          continue;
-        }
-        break;
-      }
-      valueEnd++;
-    }
-
-    if (valueEnd >= nodeText.length) return nodeText;
-    valueEnd++;
-  } else {
-    while (
-      valueEnd < nodeText.length &&
-      nodeText[valueEnd] !== '\n' &&
-      nodeText[valueEnd] !== '\r' &&
-      nodeText[valueEnd] !== ',' &&
-      nodeText[valueEnd] !== '}'
-    ) {
-      valueEnd++;
-    }
-  }
-
-  const escapedName = newName
-    .replace(/\\/g, '\\\\')
-    .replace(/"/g, '\\"');
-
-  return nodeText.slice(0, valueStart) +
-    `"${escapedName}"` +
-    nodeText.slice(valueEnd);
-}
-
-// 统一节点缩进，同时兼容标准多行节点和单行 Flow Mapping 节点
-function normalizeProxyIndent(nodeText, listIndent) {
-  // 如果是单行 Flow Mapping 节点（以 { 开头），转换为标准 YAML 列表项格式输出
-  if (nodeText.trim().startsWith('{')) {
-    return "  - " + nodeText.trim();
-  }
-
-  const lines = nodeText.split('\n');
-
-  return lines.map(line => {
-    if (line.trim() === '') return '';
-
-    const match = /^[ \t]*/.exec(line);
-    const originalIndent = match ? match[0].length : 0;
-
-    const visualIndent = match
-      ? match[0].replace(/\t/g, "    ").length
-      : 0;
-
-    const remainingIndent = Math.max(0, visualIndent - listIndent);
-
-    return "  " + " ".repeat(remainingIndent) + line.slice(originalIndent);
-  }).join('\n');
-}
-
 function getHTMLTemplate(origin) {
   return `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -774,7 +421,7 @@ function getHTMLTemplate(origin) {
 <body class="bg-slate-950 text-slate-100 min-h-screen flex items-center justify-center p-4">
     <div class="max-w-xl w-full bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl">
         <h1 class="text-2xl font-bold mb-2 text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-indigo-500">Mihomo 订阅聚合管理器</h1>
-        <p class="text-slate-400 text-sm mb-6">输入多个机场订阅链接（每行一个），系统将自动去重、拉取节点并套用定制分流模板。</p>
+        <p class="text-slate-400 text-sm mb-6">输入多个机场订阅链接（每行一个），系统将自动下发提供商配置，交由客户端原生解析所有节点。</p>
 
         <div class="mb-4">
             <label class="block text-sm font-medium text-slate-300 mb-2">机场订阅链接（多行）</label>
