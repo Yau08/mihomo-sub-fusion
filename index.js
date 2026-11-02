@@ -454,7 +454,6 @@ rules:
     return new Response("Not Found", { status: 404 });
   }
 };
-
 function generateToken() {
   return Math.random().toString(36).substring(2) + Date.now().toString(36);
 }
@@ -474,7 +473,7 @@ function decodeSubscriptionContent(text) {
   return text;
 }
 
-// 提取 proxies 模块中的独立节点，兼容不同缩进和节点表达格式
+// 提取 proxies 模块中的独立节点，同时兼容多行缩进格式与单行 Flow Mapping（大括号内联）格式
 function extractProxyNodes(raw) {
   const lines = raw.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
 
@@ -544,12 +543,32 @@ function extractProxyNodes(raw) {
 
   flushNode();
 
+  // 如果常规多行解析没抓到，尝试将整段 proxies 文本进行 Flow Mapping 单行大括号节点提取（兼容机场 B）
+  if (nodes.length === 0) {
+    let rawProxiesBlock = [];
+    for (let i = proxiesIndex + 1; i < lines.length; i++) {
+      const line = lines[i];
+      const indent = getIndent(line);
+      if (indent <= proxiesIndent && /^[^#\s][^:]*\s*:/.test(line)) break;
+      rawProxiesBlock.push(line);
+    }
+    const blockText = rawProxiesBlock.join('\n');
+    // 匹配类似 - { name: '...', ... } 或 - name: '...' 的扁平单行结构
+    const flowMatches = blockText.matchAll(/^[ \t]*-[ \t]*(\{[\s\S]*?\})/gm);
+    for (const fm of flowMatches) {
+      nodes.push(fm[1].trim());
+    }
+    if (nodes.length > 0) {
+      return { nodes, listIndent: proxiesIndent + 2 };
+    }
+  }
+
   if (nodes.length === 0 || listIndent === -1) return null;
 
   return { nodes, listIndent };
 }
 
-// 识别并修改单个节点的 name 字段
+// 识别并修改单个节点的 name 字段（同时支持多行结构与单行 Flow Mapping 大括号结构）
 function renameProxyNode(nodeText, airportIdx) {
   const nameRegex = /^[ \t]*(?:-[ \t]*)?(?:"name"|'name'|name)\s*:\s*|[,{][ \t]*(?:"name"|'name'|name)\s*:\s*/gm;
   const match = nameRegex.exec(nodeText);
@@ -718,8 +737,13 @@ function replaceProxyName(nodeText, newName) {
     nodeText.slice(valueEnd);
 }
 
-// 统一节点缩进，同时保留节点内部嵌套结构
+// 统一节点缩进，同时兼容标准多行节点和单行 Flow Mapping 节点
 function normalizeProxyIndent(nodeText, listIndent) {
+  // 如果是单行 Flow Mapping 节点（以 { 开头），转换为标准 YAML 列表项格式输出
+  if (nodeText.trim().startsWith('{')) {
+    return "  - " + nodeText.trim();
+  }
+
   const lines = nodeText.split('\n');
 
   return lines.map(line => {
