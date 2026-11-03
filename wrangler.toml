@@ -2,6 +2,6 @@ name = "mihomo-sub-fusion"
 main = "index.js"
 compatibility_date = "2026-11-01"
 minify = false
-[[previews.kv_namespaces]]
+[[kv_namespaces]]
 binding = "SUBKV"
 id = "8c076c782dfc422e8761f066babae247"
