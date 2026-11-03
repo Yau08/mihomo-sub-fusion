@@ -28,7 +28,7 @@ export default {
         }
 
         const token = generateToken();
-        await env.SUB_KV.put(token, links); // 永久保存，永不过期
+        await env.SUBKV.put(token, links); // 永久保存，永不过期
 
         return new Response(JSON.stringify({ success: true, token, url: `${url.origin}/sub?token=${token}` }), {
           headers: { "Content-Type": "application/json" },
@@ -45,8 +45,8 @@ export default {
       const token = url.searchParams.get("token");
       let linksText = "";
 
-      if (env.SUB_KV && token) {
-        linksText = await env.SUB_KV.get(token);
+      if (env.SUBKV && token) {
+        linksText = await env.SUBKV.get(token);
       }
 
       if (!linksText) {
