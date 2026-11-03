@@ -13,8 +13,8 @@ export default {
     // 2. 保存订阅配置 API
     if (path === "/api/save" && request.method === "POST") {
       try {
-        if (!env.SUB_KV) {
-          return new Response(JSON.stringify({ success: false, error: "服务器未绑定 SUB_KV 存储空间，请先在 Cloudflare 后台配置 KV 绑定" }), {
+        if (!env.SUBKV) {
+          return new Response(JSON.stringify({ success: false, error: "服务器未绑定 SUBKV 存储空间，请先在 Cloudflare 后台配置 KV 绑定" }), {
             headers: { "Content-Type": "application/json" },
           });
         }
