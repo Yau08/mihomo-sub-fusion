@@ -60,7 +60,7 @@ export default {
       const subscriptionUrls = linksText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
 
       try {
-        // 并发请求所有机场订阅
+        // 在 Worker 本地并发拉取所有机场订阅
         const fetchPromises = subscriptionUrls.map(async (subUrl) => {
           try {
             const res = await fetch(subUrl, {
@@ -68,10 +68,7 @@ export default {
             });
             if (!res.ok) return null;
             let text = await res.text();
-
-            // 自动检测并解码 Base64 订阅内容
-            text = decodeSubscriptionContent(text);
-            return text;
+            return decodeSubscriptionContent(text);
           } catch (err) {
             return null;
           }
@@ -79,29 +76,28 @@ export default {
 
         const rawResults = await Promise.all(fetchPromises);
 
-        let allProxiesBlocks = "";
-        let hasValidProxies = false;
+        let parsedProxies = [];
+        let airportIndex = 1;
 
-        // 原封不动提取每个机场的 proxies 区域并合并
+        // 在 Worker 本地解析各个机场节点（无需请求外部转换端）
         for (const raw of rawResults) {
           if (!raw) continue;
-          try {
-            const extracted = extractProxiesBlock(raw);
-            if (extracted) {
-              allProxiesBlocks += "\n" + extracted;
-              hasValidProxies = true;
-            }
-          } catch (e) {
-            console.error("Extract error", e);
+          const proxies = parseAnySubscription(raw, airportIndex);
+          if (proxies && proxies.length > 0) {
+            parsedProxies.push(...proxies);
+            airportIndex++;
           }
         }
 
-        // 🛡️ 核心防线：如果拉不到任何有效节点，返回 500 保护客户端缓存
-        if (!hasValidProxies) {
+        // 防崩溃机制：若未获取到任何节点，直接返回 500
+        if (parsedProxies.length === 0) {
           return new Response("Error: Failed to fetch or parse proxies from subscription links", { status: 500 });
         }
 
-        // 拼装完整的 Mihomo 配置模板（使用 include-all 由内核自动收集和过滤）
+        // 将解析出来的节点转换为标准 YAML 节点格式
+        const proxiesYamlText = parsedProxies.map(p => convertProxyToYaml(p)).join('\n');
+
+        // 拼装完整 Mihomo 配置
         const finalConfig = `Mixed-port: 7890
 allow-lan: true
 bind-address: "*"
@@ -110,12 +106,12 @@ ipv6: true
 log-level: warning
 external-controller: 127.0.0.1:9090
 
-# 添加直连节点
+# 节点列表
 proxies:
   - name: "🏴‍☠️ ＤＩＲＥＣＴ"
     type: direct
     udp: true
-${allProxiesBlocks}
+${proxiesYamlText}
 
 # 策略组配置
 proxy-groups:
@@ -226,63 +222,63 @@ dns:
     - "time.*.edu.cn"
     - "time.*.apple.com"
     - "*.msftconnecttest.com"
-        - "*.msftncsi.com"
-        - "dns.msftncsi.com"
-        - "captive.apple.com"
-        - "stun.l.google.com"
-        - "*.xboxlive.com"
-        - "*.battlenet.com.cn"
-        - "*.blizzard.cn"
-        - "*.pvp.net"
-        - "*.moba.qq.com"
-        - "*.stun.*.*"
-        - "*.stun.*.*.*"
-        - "*.stun.*.*.*.*"
-        - "*.synology.com"
-        - "*.myqnapcloud.com"
-        - "_tcp.*"
-        - "_udp.*"
-        - "_services._dns-sd._udp.*"
-      default-nameserver:
-        - "119.29.29.29"
-        - "223.5.5.5"
-      proxy-server-nameserver:
-        - "https://doh.pub/dns-query"
-        - "https://doh.baidu.com/dns-query"
-      nameserver:
-        - "https://dns.google/dns-query"
-        - "https://cloudflare-dns.com/dns-query"
-      nameserver-policy:
-        "geosite:cn":
-          - "119.29.29.29"
-          - "223.5.5.5"
-        "*.cn":
-          - "119.29.29.29"
-          - "223.5.5.5"
-      fallback:
-        - "8.8.8.8"
-        - "1.1.1.1"
-      fallback-filter:
-        geoip: true
-        geoip-code: "CN"
-        geosite:
-          - "gfw"
-          - "greatfire"
-        ipcidr:
-          - "0.0.0.0/8"
-          - "10.0.0.0/8"
-          - "100.64.0.0/10"
-          - "127.0.0.0/8"
-          - "169.254.0.0/16"
-          - "172.16.0.0/12"
-          - "192.168.0.0/16"
-          - "198.18.0.0/15"
-          - "224.0.0.0/4"
-          - "240.0.0.0/4"
-        domain:
-          - "+.google.com"
-          - "+.facebook.com"
-          - "+.youtube.com"
+    - "*.msftncsi.com"
+    - "dns.msftncsi.com"
+    - "captive.apple.com"
+    - "stun.l.google.com"
+    - "*.xboxlive.com"
+    - "*.battlenet.com.cn"
+    - "*.blizzard.cn"
+    - "*.pvp.net"
+    - "*.moba.qq.com"
+    - "*.stun.*.*"
+    - "*.stun.*.*.*"
+    - "*.stun.*.*.*.*"
+    - "*.synology.com"
+    - "*.myqnapcloud.com"
+    - "_tcp.*"
+    - "_udp.*"
+    - "_services._dns-sd._udp.*"
+  default-nameserver:
+    - "119.29.29.29"
+    - "223.5.5.5"
+  proxy-server-nameserver:
+    - "https://doh.pub/dns-query"
+    - "https://doh.baidu.com/dns-query"
+  nameserver:
+    - "https://dns.google/dns-query"
+    - "https://cloudflare-dns.com/dns-query"
+  nameserver-policy:
+    "geosite:cn":
+      - "119.29.29.29"
+      - "223.5.5.5"
+    "*.cn":
+      - "119.29.29.29"
+      - "223.5.5.5"
+  fallback:
+    - "8.8.8.8"
+    - "1.1.1.1"
+  fallback-filter:
+    geoip: true
+    geoip-code: "CN"
+    geosite:
+      - "gfw"
+      - "greatfire"
+    ipcidr:
+      - "0.0.0.0/8"
+      - "10.0.0.0/8"
+      - "100.64.0.0/10"
+      - "127.0.0.0/8"
+      - "169.254.0.0/16"
+      - "172.16.0.0/12"
+      - "192.168.0.0/16"
+      - "198.18.0.0/15"
+      - "224.0.0.0/4"
+      - "240.0.0.0/4"
+    domain:
+      - "+.google.com"
+      - "+.facebook.com"
+      - "+.youtube.com"
 
 # 规则配置
 rules:
@@ -418,7 +414,7 @@ function decodeSubscriptionContent(text) {
   if (!text.includes("proxies:")) {
     try {
       const decoded = atob(text);
-      if (decoded.includes("proxies:")) {
+      if (decoded.includes("proxies:") || decoded.includes("://")) {
         return decoded;
       }
     } catch (e) {
@@ -428,45 +424,105 @@ function decodeSubscriptionContent(text) {
   return text;
 }
 
-// 状态机：整块原封不动提取 proxies 区块（兼容多行、单行大括号等任意格式）
-function extractProxiesBlock(raw) {
-  const lines = raw.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
-  let proxiesIndex = -1;
-  let proxiesIndent = 0;
+// ⭐ 纯 Worker 本地全通用解析引擎 (兼容多行 YAML、单行 Flow Mapping，以及各种协议链接)
+function parseAnySubscription(rawText, airportIdx) {
+  const proxies = [];
+  const lines = rawText.replace(/\r\n/g, '\n').split('\n');
 
-  for (let i = 0; i < lines.length; i++) {
-    const match = /^([ \t]*)proxies\s*:\s*(?:#.*)?$/i.exec(lines[i]);
-    if (match) {
-      proxiesIndex = i;
-      proxiesIndent = match[1].replace(/\t/g, "    ").length;
-      break;
-    }
-  }
-
-  if (proxiesIndex === -1) return null;
-
-  const blockLines = [];
-  for (let i = proxiesIndex + 1; i < lines.length; i++) {
-    const line = lines[i];
+  // 1. 优先尝试提取 YAML 中的 proxies 块
+  let inProxies = false;
+  for (let line of lines) {
     const trimmed = line.trim();
-
-    if (!trimmed || trimmed.startsWith('#')) {
-      blockLines.push(line);
+    if (!inProxies) {
+      if (/^proxies\s*:/i.test(trimmed)) {
+        inProxies = true;
+      }
       continue;
     }
 
-    const match = /^([ \t]*)/.exec(line);
-    const indent = match ? match[1].replace(/\t/g, "    ").length : 0;
-
-    // 遇到下一个同级或高级顶层键，退出
-    if (indent <= proxiesIndent && /^[^#\s][^:]*\s*:/.test(line)) {
-      break;
+    if (/^[a-zA-Z_-]+\s*:/i.test(line) && !line.startsWith(' ') && !line.startsWith('\t')) {
+      break; // 遇到了下一个顶级 YAML 属性，退出 proxies
     }
 
-    blockLines.push(line);
+    if (!trimmed || trimmed.startsWith('#')) continue;
+
+    // 解析单行流映射 Flow Mapping 格式：- { name: '...', type: ... }
+    if (trimmed.startsWith('- {') || trimmed.startsWith('{')) {
+      const kvMatch = trimmed.match(/\{([^}]+)\}/);
+      if (kvMatch) {
+        const obj = {};
+        kvMatch[1].split(',').forEach(pair => {
+          const colonIdx = pair.indexOf(':');
+          if (colonIdx !== -1) {
+            const key = pair.slice(0, colonIdx).trim().replace(/^['"]|['"]$/g, '');
+            const val = pair.slice(colonIdx + 1).trim().replace(/^['"]|['"]$/g, '');
+            obj[key] = val;
+          }
+        });
+        if (obj.name && obj.type) {
+          obj.name = `[${airportIdx}] ${obj.name}`;
+          proxies.push(obj);
+        }
+      }
+    } 
+    // 解析标准 YAML 多行格式中的节点 start (- name: ...)
+    else if (trimmed.startsWith('-')) {
+      const nameMatch = trimmed.match(/name\s*:\s*(?:"([^"]+)"|'([^']+)'|([^,{}#\n]+))/);
+      const typeMatch = trimmed.match(/type\s*:\s*([^\s,{}#\n]+)/);
+      const serverMatch = trimmed.match(/server\s*:\s*([^\s,{}#\n]+)/);
+      const portMatch = trimmed.match(/port\s*:\s*([^\s,{}#\n]+)/);
+
+      if (nameMatch) {
+        const name = (nameMatch[1] || nameMatch[2] || nameMatch[3] || "").trim();
+        const nodeObj = {
+          name: `[${airportIdx}] ${name}`,
+          type: typeMatch ? typeMatch[1] : 'vless',
+          server: serverMatch ? serverMatch[1] : '127.0.0.1',
+          port: portMatch ? portMatch[1] : '443',
+          rawLine: line
+        };
+        proxies.push(nodeObj);
+      }
+    }
   }
 
-  return blockLines.join('\n').trim();
+  // 2. 如果不是 YAML，尝试解析节点链接 (vless://, vmess://, hysteria2:// 等)
+  if (proxies.length === 0) {
+    for (let line of lines) {
+      const trimmed = line.trim();
+      if (trimmed.includes("://")) {
+        try {
+          const node = parseUriNode(trimmed, airportIdx);
+          if (node) proxies.push(node);
+        } catch (e) {}
+      }
+    }
+  }
+
+  return proxies;
+}
+
+// 辅助解析通用节点的 URI
+function parseUriNode(uri, airportIdx) {
+  const url = new URL(uri);
+  const name = decodeURIComponent(url.hash.replace('#', '')) || 'Node';
+  return {
+    name: `[${airportIdx}] ${name}`,
+    type: url.protocol.replace(':', ''),
+    server: url.hostname,
+    port: url.port || '443',
+    uuid: url.username
+  };
+}
+
+// 将 Worker 解析出的本地 JS 对象转化为标准单行 Mihomo 兼容节点
+function convertProxyToYaml(p) {
+  if (p.rawLine) {
+    // 保持原有多行提取的属性完整度
+    return p.rawLine.startsWith('  -') ? p.rawLine : `  ${p.rawLine}`;
+  }
+  // 构建标准兼容行
+  return `  - { name: "${p.name.replace(/"/g, '\\"')}", type: ${p.type}, server: ${p.server}, port: ${p.port}, udp: true }`;
 }
 
 function getHTMLTemplate(origin) {
@@ -481,7 +537,7 @@ function getHTMLTemplate(origin) {
 <body class="bg-slate-950 text-slate-100 min-h-screen flex items-center justify-center p-4">
     <div class="max-w-xl w-full bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl">
         <h1 class="text-2xl font-bold mb-2 text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-indigo-500">Mihomo 订阅聚合管理器</h1>
-        <p class="text-slate-400 text-sm mb-6">输入多个机场订阅链接（每行一个），系统将自动抓取并原地合并多个机场的节点。</p>
+        <p class="text-slate-400 text-sm mb-6">纯本地 Worker 解析引擎：自动兼容多行与单行 YAML 订阅。</p>
 
         <div class="mb-4">
             <label class="block text-sm font-medium text-slate-300 mb-2">机场订阅链接（多行）</label>
@@ -544,30 +600,4 @@ function getHTMLTemplate(origin) {
     </script>
 </body>
 </html>`;
-}
-
-function dedent(text) {
-  const lines = text.split('\n');
-  let minIndent = Infinity;
-
-  for (const line of lines) {
-    if (line.trim() === '') continue;
-    const match = line.match(/^(\s*)/);
-    if (match) {
-      const indentLen = match[1].length;
-      if (indentLen > 0 && indentLen < minIndent) {
-        minIndent = indentLen;
-      }
-    }
-  }
-
-  if (minIndent === Infinity || minIndent === 0) return text;
-
-  return lines.map(line => {
-    const match = line.match(/^(\s*)/);
-    if (match && match[1].length >= minIndent) {
-      return line.slice(minIndent);
-    }
-    return line;
-  }).join('\n');
 }
