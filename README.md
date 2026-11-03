@@ -26,7 +26,7 @@
 
 ## ✨ 功能特性
 
-* **🎨 现代化 Web UI**：通过 `/sub` 页面可视化管理和输入多个机场订阅链接，一键生成专属分发链接。
+* **🎨 现代化 Web UI**：通过 `/set` 页面可视化管理和输入多个机场订阅链接，一键生成专属分发链接。
 * **♾️ 无限制聚合**：支持同时聚合多家机场/订阅源，并发请求，高效稳定。
 * **⚙️ 深度定制模板**：内置强大的 Mihomo 原生动态筛选（`filter`）策略组、广告拦截、Apple/Google/Telegram 等精细化分流规则。
 * **☁️ 零成本部署**：基于 Cloudflare Workers 运行，全球 CDN 加速，无需自己购买和维护服务器。
@@ -48,7 +48,7 @@
 ### 第二步：绑定 KV 存储（推荐，用于持久化保存订阅配置）
 1. 在 Cloudflare 后台左侧点击 **Workers** -> **KV** -> **Create a namespace**（命名空间名称可随意，例如 `sub_kv`）。
 2. 返回你的 Worker 设置页面：`Settings` -> `Variables` -> 找到 **KV Namespace Bindings** -> 点击 **Add binding**。
-   * **Variable name** 填入：`SUB_KV`
+   * **Variable name** 填入：`SUBKV`
    * **KV namespace** 选择你刚刚创建的命名空间。
 3. 点击 **Save** 保存。
 
